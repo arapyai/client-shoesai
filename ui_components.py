@@ -314,6 +314,8 @@ def render_segmentation_chart(data_dist, title, demographic_col_name_for_legend)
     # Adidas     Masculino              8
     # Adidas     Feminino              12
     
+    if data_dist.index.name is None:
+        data_dist.index.name = 'Categoria Principal'
     data_long = data_dist.reset_index().melt(
         id_vars=data_dist.index.name, # e.g., 'shoe_brand'
         var_name=demographic_col_name_for_legend, # e.g., 'Gênero'
