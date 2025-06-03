@@ -46,7 +46,7 @@ def logout_button(key_suffix="", button_text="🚪 Sair", help_text="Fazer logou
     Returns:
         bool: True if logout button was clicked, False otherwise
     """
-    if st.button(button_text, key=f"logout_button_{key_suffix}", help=help_text):
+    if st.button(button_text, key=f"logout_button_{key_suffix}", help=help_text, use_container_width=True):
         # Clear session state
         st.session_state.logged_in = False
         st.session_state.user_info = None
@@ -56,61 +56,59 @@ def logout_button(key_suffix="", button_text="🚪 Sair", help_text="Fazer logou
         return True
     return False
 
+def add_sidebar_profile_and_logout():
+    """
+    Adds profile link and logout button to the bottom of the sidebar.
+    This function should be called once on each page.
+    """
+    # Add space to push content to bottom of sidebar
+    for _ in range(5):
+        st.sidebar.write("")
+    
+    # Add a separator
+    st.sidebar.markdown("---")
+    
+    # Display user info
+    user_email = st.session_state.user_info.get("email", "Usuário")
+    display_name = user_email.split("@")[0]  # Use part before @ as display name
+    
+    # Container for profile link
+    with st.sidebar.container():
+        profile_col, _ = st.columns([1, 0.2])
+        with profile_col:
+            if st.button(f"👤 Perfil ({display_name})", key="profile_button_sidebar", use_container_width=True):
+                st.switch_page("pages/4_👤_Perfil.py")
+    
+    # Logout button
+    with st.sidebar.container():
+        logout_col, _ = st.columns([1, 0.2])
+        with logout_col:
+            logout_button("sidebar")
+
 def page_header_with_logout(title, subtitle=None, key_suffix=""):
     """
-    Reusable page header component with logout button.
+    Reusable page header component that also adds profile/logout to sidebar bottom.
     
     Args:
         title (str): Main title for the page
         subtitle (str, optional): Subtitle or caption for the page
-        key_suffix (str): Suffix to add to the logout button key to ensure uniqueness
+        key_suffix (str): Suffix to add to identify components (not used for logout now)
     """
-    # Create columns for header, profile link, and logout button
-    header_col, user_col = st.columns([4, 1])
+    # Display the header title and subtitle
+    st.title(title)
+    if subtitle:
+        st.caption(subtitle)
     
-    with header_col:
-        st.title(title)
-        if subtitle:
-            st.caption(subtitle)
-    
-    with user_col:
-        # Add some spacing to align buttons with the header
-        st.write("")
-        
-        # Get user info from session state
-        user_email = st.session_state.user_info.get("email", "Usuário")
-        display_name = user_email.split("@")[0]  # Use part before @ as display name
-        
-        # Create a container for user controls with CSS flexbox
-        st.markdown(
-            f"""
-            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px;">
-                <a href="/pages/4_👤_Perfil.py" style="text-decoration: none; color: #0066cc;">
-                    <div style="display: flex; align-items: center;">
-                        <span style="font-size: 0.9em; margin-right: 5px;">👤 {display_name}</span>
-                    </div>
-                </a>
-                <div id="logout_btn_{key_suffix}"></div>
-            </div>
-            """, 
-            unsafe_allow_html=True
-        )
-        
-        # Place the logout button in the div we created
-        logout_button(key_suffix)
+    # Add profile and logout to sidebar
+    add_sidebar_profile_and_logout()
 
 def display_header():
-    # Create columns for header and logout button
-    header_col, logout_col = st.columns([4, 1])
+    # Create header
+    st.markdown(f"## 🏃 Análise de Provas (Pastas)")
+    st.caption("Aqui você pode gerar relatórios e exportá-los. Selecione as \"provas\" (pastas de imagens) que gostaria de analisar.")
     
-    with header_col:
-        st.markdown(f"## 🏃 Análise de Provas (Pastas)")
-        st.caption("Aqui você pode gerar relatórios e exportá-los. Selecione as \"provas\" (pastas de imagens) que gostaria de analisar.")
-    
-    with logout_col:
-        # Add some spacing to align the button with the header
-        st.write("")
-        logout_button("reports_page")
+    # Add profile and logout to sidebar
+    add_sidebar_profile_and_logout()
 
 def render_marathon_info_cards(selected_marathon_names, marathon_specific_data_for_cards, db_marathon_metadata_list):
     """
