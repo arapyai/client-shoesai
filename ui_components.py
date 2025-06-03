@@ -507,18 +507,17 @@ def report_page_content_main(processed_metrics, marathon_specific_data_for_cards
 
 
 def render_pdf_preview_modal(processed_metrics, marathon_specific_data_for_cards):
-    with st.dialog("Preview Relatório (Simulado)", width='large'):
-        st.caption(f"Total de páginas: X (estimado)")
-        with st.container(height=600):
-             report_page_content_main(processed_metrics, marathon_specific_data_for_cards)
-        st.markdown("---")
-        btn_cols = st.columns([1,5,1])
-        with btn_cols[0]:
-            if st.button("Exportar Relatório (PDF - Mock)", type="primary", use_container_width=True, key="pdf_export_confirm_modal_db"):
-                st.toast("Funcionalidade de exportação PDF não implementada.")
-                st.session_state.show_pdf_preview_db = False
-                st.rerun()
-        with btn_cols[2]:
-            if st.button("Fechar Preview", use_container_width=True, key="pdf_close_preview_modal_db"):
-                st.session_state.show_pdf_preview_db = False
-                st.rerun()
+    st.caption(f"Total de páginas: X (estimado)")
+    with st.container(height=600):
+            report_page_content_main(processed_metrics, marathon_specific_data_for_cards)
+    st.markdown("---")
+    btn_cols = st.columns([1,5,1])
+    with btn_cols[0]:
+        if st.button("Exportar Relatório (PDF - Mock)", type="primary", use_container_width=True, key="pdf_export_confirm_modal_db"):
+            st.toast("Funcionalidade de exportação PDF não implementada.")
+            st.session_state.show_pdf_preview_db = False
+            st.rerun()
+    with btn_cols[2]:
+        if st.button("Fechar Preview", use_container_width=True, key="pdf_close_preview_modal_db"):
+            st.session_state.show_pdf_preview_db = False
+            st.rerun()
