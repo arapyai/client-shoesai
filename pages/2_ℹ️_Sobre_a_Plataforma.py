@@ -7,7 +7,11 @@ if not st.session_state.get("logged_in", False):
     st.link_button("Ir para Login", "/")
     st.stop()
 
-st.title("ℹ️ Sobre a plataforma CourtShoes AI")
+# Import the page header component
+from ui_components import page_header_with_logout
+
+# Display page header with logout button
+page_header_with_logout("ℹ️ Sobre a plataforma CourtShoes AI", key_suffix="about")
 st.markdown("""
 Bem-vindo à plataforma de análise de maratonas da CourtShoes AI!
 

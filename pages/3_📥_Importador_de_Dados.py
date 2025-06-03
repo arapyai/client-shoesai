@@ -18,8 +18,13 @@ if "user_info" not in st.session_state or not st.session_state.user_info.get("us
 
 user_id = st.session_state.user_info["user_id"]
 
-st.title("📥 Importador de Dados de Provas")
-st.markdown("Faça o upload de um arquivo JSON contendo os dados da prova e preencha os metadados.")
+# Import the page header component
+from ui_components import page_header_with_logout
+
+# Display page header with logout button
+page_header_with_logout("📥 Importador de Dados de Provas", 
+                      "Faça o upload de um arquivo JSON contendo os dados da prova e preencha os metadados.",
+                      key_suffix="importer")
 
 with st.form("marathon_import_form", clear_on_submit=False): # Keep values on submit for now
     st.subheader("Metadados da Prova")

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from data_processing import process_queried_data_for_report # Updated function name
 from ui_components import (
-    display_header,
+    page_header_with_logout,
     report_page_content_main, # This will be called with processed_metrics
     render_pdf_preview_modal   # This will also be called with processed_metrics
 )
@@ -53,7 +53,10 @@ if 'show_pdf_preview_db' not in st.session_state:
 
 # --- Main Report Page UI ---
 def report_page_db():
-    display_header()
+    # Use the reusable page header component
+    page_header_with_logout("📊 Análise de Provas", 
+                           "Aqui você pode gerar relatórios e exportá-los. Selecione as provas que gostaria de analisar.",
+                           key_suffix="reports")
 
     cols_actions = st.columns([3, 1, 1, 1.5]) # Adjusted for button text
     with cols_actions[0]:

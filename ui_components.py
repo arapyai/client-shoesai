@@ -34,9 +34,62 @@ def create_column_grid(num_items: int, items_per_row: int):
 
 # --- UI Components for Main App ---
 
+def logout_button(key_suffix="", button_text="🚪 Sair", help_text="Fazer logout"):
+    """
+    Reusable logout button component that clears session state and redirects to login.
+    
+    Args:
+        key_suffix (str): Suffix to add to the button key to ensure uniqueness
+        button_text (str): Text to display on the button
+        help_text (str): Tooltip text for the button
+    
+    Returns:
+        bool: True if logout button was clicked, False otherwise
+    """
+    if st.button(button_text, key=f"logout_button_{key_suffix}", help=help_text):
+        # Clear session state
+        st.session_state.logged_in = False
+        st.session_state.user_info = None
+        # Redirect to main login page
+        st.switch_page("app.py")
+        st.stop()
+        return True
+    return False
+
+def page_header_with_logout(title, subtitle=None, key_suffix=""):
+    """
+    Reusable page header component with logout button.
+    
+    Args:
+        title (str): Main title for the page
+        subtitle (str, optional): Subtitle or caption for the page
+        key_suffix (str): Suffix to add to the logout button key to ensure uniqueness
+    """
+    # Create columns for header and logout button
+    header_col, logout_col = st.columns([4, 1])
+    
+    with header_col:
+        st.title(title)
+        if subtitle:
+            st.caption(subtitle)
+    
+    with logout_col:
+        # Add some spacing to align the button with the header
+        st.write("")
+        logout_button(key_suffix)
+
 def display_header():
-    st.markdown(f"## 🏃 Análise de Provas (Pastas)")
-    st.caption("Aqui você pode gerar relatórios e exportá-los. Selecione as \"provas\" (pastas de imagens) que gostaria de analisar.")
+    # Create columns for header and logout button
+    header_col, logout_col = st.columns([4, 1])
+    
+    with header_col:
+        st.markdown(f"## 🏃 Análise de Provas (Pastas)")
+        st.caption("Aqui você pode gerar relatórios e exportá-los. Selecione as \"provas\" (pastas de imagens) que gostaria de analisar.")
+    
+    with logout_col:
+        # Add some spacing to align the button with the header
+        st.write("")
+        logout_button("reports_page")
 
 def render_marathon_info_cards(selected_marathon_names, marathon_specific_data_for_cards, db_marathon_metadata_list):
     """
