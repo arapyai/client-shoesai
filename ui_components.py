@@ -65,17 +65,38 @@ def page_header_with_logout(title, subtitle=None, key_suffix=""):
         subtitle (str, optional): Subtitle or caption for the page
         key_suffix (str): Suffix to add to the logout button key to ensure uniqueness
     """
-    # Create columns for header and logout button
-    header_col, logout_col = st.columns([4, 1])
+    # Create columns for header, profile link, and logout button
+    header_col, user_col = st.columns([4, 1])
     
     with header_col:
         st.title(title)
         if subtitle:
             st.caption(subtitle)
     
-    with logout_col:
-        # Add some spacing to align the button with the header
+    with user_col:
+        # Add some spacing to align buttons with the header
         st.write("")
+        
+        # Get user info from session state
+        user_email = st.session_state.user_info.get("email", "Usuário")
+        display_name = user_email.split("@")[0]  # Use part before @ as display name
+        
+        # Create a container for user controls with CSS flexbox
+        st.markdown(
+            f"""
+            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px;">
+                <a href="/pages/4_👤_Perfil.py" style="text-decoration: none; color: #0066cc;">
+                    <div style="display: flex; align-items: center;">
+                        <span style="font-size: 0.9em; margin-right: 5px;">👤 {display_name}</span>
+                    </div>
+                </a>
+                <div id="logout_btn_{key_suffix}"></div>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        
+        # Place the logout button in the div we created
         logout_button(key_suffix)
 
 def display_header():

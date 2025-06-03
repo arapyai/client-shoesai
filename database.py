@@ -103,6 +103,51 @@ def verify_user(email, password):
         return {"user_id": user_record["user_id"], "email": user_record["email"], "is_admin": bool(user_record["is_admin"])}
     return None
 
+def update_user_email(user_id, new_email):
+    """
+    Updates a user's email address.
+    
+    Args:
+        user_id (int): The ID of the user to update
+        new_email (str): The new email address
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE Users SET email = ? WHERE user_id = ?", (new_email, user_id))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+def update_user_password(user_id, new_password):
+    """
+    Updates a user's password.
+    
+    Args:
+        user_id (int): The ID of the user to update
+        new_password (str): The new password (will be hashed)
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    hashed_password = hasher.hash(new_password)
+    try:
+        cursor.execute("UPDATE Users SET hashed_password = ? WHERE user_id = ?", (hashed_password, user_id))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
 def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
