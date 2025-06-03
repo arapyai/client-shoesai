@@ -496,8 +496,8 @@ def report_page_content_main(processed_metrics, marathon_specific_data_for_cards
                               "🚻 Segmentação por Gênero (Marcas)")
     
     st.markdown("---")
-    render_segmentation_chart(processed_metrics["race_brand_distribution"], 
-                              "🧑🏾‍🤝‍🧑🏼 Segmentação por Raça/Etnia (Marcas)", "raça/etnia")
+    render_race_distribution_horizontal_stacked_bars(processed_metrics["race_brand_distribution"], 
+                              "🧑🏾‍🤝‍🧑🏼 Segmentação por Raça/Etnia (Marcas)")
 
     st.markdown("---")
     render_marathon_comparison_chart(processed_metrics["brand_counts_by_marathon"])
@@ -521,3 +521,82 @@ def render_pdf_preview_modal(processed_metrics, marathon_specific_data_for_cards
         if st.button("Fechar Preview", use_container_width=True, key="pdf_close_preview_modal_db"):
             st.session_state.show_pdf_preview_db = False
             st.rerun()
+
+def render_race_distribution_horizontal_stacked_bars(race_brand_data: pd.DataFrame, 
+                                      title="🧑🏾‍🤝‍🧑🏼 Distribuição de Raça/Etnia por Marca"):
+    """
+    Renders a horizontal stacked bar chart showing the distribution of races/ethnicities across brands.
+    
+    Args:
+        race_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
+                                       columns are race/ethnicity categories,
+                                       and values are absolute counts.
+        title (str): The title for the chart section.
+    """
+    st.subheader(title)
+
+    if race_brand_data is None or race_brand_data.empty:
+        st.caption("Não há dados de raça/etnia e marca para exibir.")
+        return
+
+    # Ensure index is named
+    if race_brand_data.index.name is None:
+        race_brand_data.index.name = "shoe_brand"
+    
+    race_col_name = race_brand_data.index.name
+
+    # Melt the DataFrame to long format for Altair
+    df_long = race_brand_data.reset_index().melt(
+        id_vars=race_col_name,
+        var_name="marca",
+        value_name="count"
+    )
+
+    if df_long.empty or df_long['count'].sum() == 0:
+        st.caption("Não há dados processados de raça/etnia e marca para exibir.")
+        return
+
+    # Sort brands by total count for better visualization
+    race_totals = race_brand_data.sum(axis=1).sort_values(ascending=False)
+    sorted_races = race_totals.index.tolist()
+    
+    # Create a horizontal stacked bar chart using Altair
+    chart = alt.Chart(df_long).mark_bar().encode(
+        # Y-axis: race ordered by total count
+        y=alt.Y(f'{race_col_name}:N', 
+                title='Marca',
+                sort=sorted_races,  # Sort races by total count
+                axis=alt.Axis(labelLimit=200)),  # Ensure race labels are visible
+        
+        # X-axis: stacked count
+        x=alt.X('count:Q', 
+                title='Contagem',
+                stack='normalize'),  # Stack the bars
+        
+        # Color by race/ethnicity
+        color=alt.Color('marca:N', 
+                        title='Marca'),
+        
+        # Order of stacking (consistent across brands)
+        order=alt.Order('marca:N', sort='ascending'),
+        
+        # Tooltips for interactive exploration
+        tooltip=[
+            alt.Tooltip(f'{race_col_name}:N', title='Raça/Etnia'),
+            alt.Tooltip('marca:N', title='Marca'),
+            alt.Tooltip('count:Q', title='Contagem', format=',d'),
+            alt.Tooltip('percentage:Q', title='Percentual da Marca', format='.1%')
+        ]
+    ).transform_joinaggregate(
+        total='sum(count)',
+        groupby=[race_col_name]
+    ).transform_calculate(
+        percentage='datum.count/datum.total'
+    ).properties(
+        # Set appropriate height based on number of brands
+        height=max(100, len(sorted_races) * 30),
+        width=600
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("As barras horizontais representam a distribuição de raça/etnia para cada marca. Todos os rótulos das marcas são visíveis.")
