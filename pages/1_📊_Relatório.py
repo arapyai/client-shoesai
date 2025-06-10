@@ -151,11 +151,33 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
 
 def render_multiple_marathons_view(selected_marathons: list):
     """
-    Efficiently render multiple marathons in columns only.
+    Efficiently render multiple marathons with different visualization modes.
     """
     st.subheader("🏃‍♂️ Análise por Prova")
-    st.caption("Visualize os dados específicos de cada prova selecionada")
     
+    # Add visualization mode selector for multiple marathons
+    if len(selected_marathons) > 1:
+        viz_mode = st.radio(
+            "Modo de Visualização:",
+            options=["columns", "timeline"],
+            format_func=lambda x: "📊 Lado a Lado" if x == "columns" else "📈 Evolução Temporal",
+            horizontal=True,
+            key="marathon_viz_mode"
+        )
+    else:
+        viz_mode = "columns"  # Default for single marathon
+    
+    if viz_mode == "columns":
+        st.caption("Visualize os dados específicos de cada prova selecionada lado a lado")
+        render_columns_view(selected_marathons)
+    else:
+        st.caption("Visualize a evolução das marcas ao longo do tempo nas provas selecionadas")
+        render_timeline_view(selected_marathons)
+
+def render_columns_view(selected_marathons: list):
+    """
+    Render marathons in side-by-side columns (original approach).
+    """
     # Preprocess all marathon data efficiently
     individual_data = preprocess_individual_marathons(selected_marathons)
     
@@ -166,6 +188,97 @@ def render_multiple_marathons_view(selected_marathons: list):
         if marathon_name in individual_data:
             with cols[i]:
                 render_individual_marathon_column(marathon_name, individual_data[marathon_name])
+
+def render_timeline_view(selected_marathons: list):
+    """
+    Render marathons in a timeline view with line charts showing brand evolution.
+    """
+    from ui_components import render_brand_timeline_chart
+    
+    # Get all marathon data
+    individual_data = preprocess_individual_marathons(selected_marathons)
+    
+    if not individual_data:
+        st.warning("Nenhum dado disponível para as provas selecionadas.")
+        return
+    
+    # Prepare timeline data
+    timeline_data = prepare_timeline_data(individual_data, selected_marathons)
+    
+    if timeline_data.empty:
+        st.warning("Não há dados suficientes para gerar a visualização temporal.")
+        return
+    
+    # Render the timeline chart
+    render_brand_timeline_chart(timeline_data)
+
+def prepare_timeline_data(individual_data: dict, selected_marathons: list) -> pd.DataFrame:
+    """
+    Prepare data for timeline visualization by combining marathon data with dates.
+    
+    Args:
+        individual_data: Dictionary containing processed data for each marathon
+        selected_marathons: List of selected marathon names
+        
+    Returns:
+        DataFrame with columns: marathon_name, event_date, brand, percentage
+    """
+    timeline_records = []
+    
+    # Get marathon metadata for dates
+    marathon_metadata = st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
+    
+    for marathon_name in selected_marathons:
+        if marathon_name not in individual_data:
+            continue
+            
+        marathon_data = individual_data[marathon_name]
+        
+        # Get event date for this marathon
+        marathon_meta = next((m for m in marathon_metadata if m['name'] == marathon_name), None)
+        event_date = marathon_meta.get('event_date') if marathon_meta else None
+        
+        if not event_date:
+            # Skip marathons without dates
+            continue
+            
+        # Parse the event date (assuming format YYYY-MM-DD)
+        try:
+            event_date_parsed = pd.to_datetime(event_date)
+        except:
+            # If date parsing fails, skip this marathon
+            continue
+        
+        # Get brand counts for this marathon
+        brand_counts = marathon_data.get("brand_counts_all_selected", pd.Series())
+        
+        if brand_counts.empty:
+            continue
+            
+        # Calculate percentages
+        total_shoes = brand_counts.sum()
+        
+        for brand, count in brand_counts.items():
+            percentage = (count / total_shoes) * 100 if total_shoes > 0 else 0
+            
+            timeline_records.append({
+                'marathon_name': marathon_name,
+                'event_date': event_date_parsed,
+                'brand': brand,
+                'count': count,
+                'percentage': percentage
+            })
+    
+    # Convert to DataFrame
+    timeline_df = pd.DataFrame(timeline_records)
+    
+    if timeline_df.empty:
+        return timeline_df
+    
+    # Sort by date
+    timeline_df = timeline_df.sort_values('event_date')
+    
+    return timeline_df
 
 # --- Main Report Page UI ---
 def report_page_db():

@@ -665,3 +665,131 @@ def render_race_by_brand(race_brand_data: pd.DataFrame, min_percentage_for_displ
         "Raça", 
         min_percentage_for_display
     )
+
+
+def render_brand_timeline_chart(timeline_data: pd.DataFrame) -> None:
+    """
+    Render a line chart showing brand percentage evolution over time.
+    
+    Args:
+        timeline_data: DataFrame with columns: marathon_name, event_date, brand, percentage
+    """
+    st.subheader("📈 Evolução das Marcas ao Longo do Tempo")
+    
+    if timeline_data.empty:
+        st.warning("Não há dados temporais disponíveis para visualização.")
+        return
+    
+    # Get top brands to focus on (top 8 to avoid clutter)
+    top_brands = timeline_data.groupby('brand')['percentage'].mean().sort_values(ascending=False).head(8).index.tolist()
+    
+    # Filter data to top brands only
+    filtered_data = timeline_data[timeline_data['brand'].isin(top_brands)].copy()
+    
+    if filtered_data.empty:
+        st.warning("Não há dados suficientes para gerar o gráfico temporal.")
+        return
+    
+    # Create color palette for brands
+    color_scale = alt.Scale(scheme='category20')
+    
+    # Create the line chart with points
+    chart = alt.Chart(filtered_data).mark_line(
+        point=True,
+        strokeWidth=3
+    ).encode(
+        x=alt.X('event_date:T', 
+                title='Data da Prova',
+                axis=alt.Axis(format='%b %Y', labelAngle=-45)),
+        y=alt.Y('percentage:Q', 
+                title='Participação (%)',
+                scale=alt.Scale(domain=[0, filtered_data['percentage'].max() * 1.1])),
+        color=alt.Color('brand:N', 
+                       title='Marca',
+                       scale=color_scale),
+        tooltip=[
+            alt.Tooltip('marathon_name:N', title='Prova'),
+            alt.Tooltip('event_date:T', title='Data', format='%d/%m/%Y'),
+            alt.Tooltip('brand:N', title='Marca'),
+            alt.Tooltip('percentage:Q', title='Participação (%)', format='.1f'),
+            alt.Tooltip('count:Q', title='Contagem')
+        ]
+    ).properties(
+        height=400,
+        title=alt.TitleParams(
+            text="Evolução da Participação das Marcas por Prova",
+            anchor='start'
+        )
+    ).resolve_scale(
+        color='independent'
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+    
+    # Add summary insights
+    st.markdown("---")
+    render_timeline_insights(filtered_data, top_brands)
+
+def render_timeline_insights(timeline_data: pd.DataFrame, top_brands: list) -> None:
+    """
+    Render insights about brand evolution over time.
+    
+    Args:
+        timeline_data: DataFrame with timeline data
+        top_brands: List of top brand names
+    """
+    st.subheader("💡 Insights da Evolução Temporal")
+    
+    if timeline_data.empty or len(timeline_data['event_date'].unique()) < 2:
+        st.info("São necessárias pelo menos 2 provas com datas para gerar insights temporais.")
+        return
+    
+    insights = []
+    
+    # Calculate trends for each brand
+    for brand in top_brands:
+        brand_data = timeline_data[timeline_data['brand'] == brand].sort_values('event_date')
+        
+        if len(brand_data) < 2:
+            continue
+            
+        # Calculate trend (simple: compare first and last values)
+        first_percentage = brand_data.iloc[0]['percentage']
+        last_percentage = brand_data.iloc[-1]['percentage']
+        change = last_percentage - first_percentage
+        
+        if abs(change) > 2:  # Only show significant changes
+            trend = "crescimento" if change > 0 else "queda"
+            insights.append({
+                'brand': brand,
+                'trend': trend,
+                'change': abs(change),
+                'direction': '📈' if change > 0 else '📉'
+            })
+    
+    if insights:
+        # Sort by magnitude of change
+        insights.sort(key=lambda x: x['change'], reverse=True)
+        
+        # Display top insights
+        for i, insight in enumerate(insights[:3]):  # Show top 3 insights
+            if i == 0:
+                st.markdown(f"""
+                **{insight['direction']} Destaque Principal:** A marca **{insight['brand']}** apresentou {insight['trend']} 
+                de **{insight['change']:.1f} pontos percentuais** entre a primeira e última prova analisada.
+                """)
+            else:
+                st.markdown(f"""
+                • **{insight['brand']}**: {insight['trend']} de {insight['change']:.1f}pp {insight['direction']}
+                """)
+    else:
+        st.info("As marcas mantiveram participações relativamente estáveis ao longo do tempo.")
+    
+    # Show data coverage info
+    total_marathons = len(timeline_data['marathon_name'].unique())
+    date_range = timeline_data['event_date'].agg(['min', 'max'])
+    
+    st.caption(f"""
+    📊 **Cobertura dos Dados:** {total_marathons} provas analisadas 
+    de {date_range['min'].strftime('%b/%Y')} até {date_range['max'].strftime('%b/%Y')}
+    """)
