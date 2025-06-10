@@ -171,6 +171,74 @@ def update_user_password(user_id, new_password):
     finally:
         conn.close()
 
+def get_all_users():
+    """
+    Get all users from the database.
+    
+    Returns:
+        list: List of user dictionaries with user_id, email, and is_admin
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, email, is_admin FROM Users ORDER BY email")
+    users = [{"user_id": row['user_id'], "email": row['email'], "is_admin": bool(row['is_admin'])} 
+             for row in cursor.fetchall()]
+    conn.close()
+    return users
+
+def delete_user(user_id):
+    """
+    Delete a user from the database.
+    
+    Args:
+        user_id (int): The ID of the user to delete
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check if user exists
+        cursor.execute("SELECT email FROM Users WHERE user_id = ?", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            return False
+        
+        # Update marathons uploaded by this user to set uploaded_by_user_id to NULL
+        cursor.execute("UPDATE Marathons SET uploaded_by_user_id = NULL WHERE uploaded_by_user_id = ?", (user_id,))
+        
+        # Delete the user
+        cursor.execute("DELETE FROM Users WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+def update_user_role(user_id, is_admin):
+    """
+    Update a user's admin status.
+    
+    Args:
+        user_id (int): The ID of the user to update
+        is_admin (bool): Whether the user should be an admin
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE Users SET is_admin = ? WHERE user_id = ?", (is_admin, user_id))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
 def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -495,7 +563,7 @@ def get_precomputed_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Any]:
         marathon_specific_data = {}
         
         for row in metrics_rows:
-            marathon_name = row['marathon_name']
+            marathon_name = row['marathon_name'];
             
             # Store individual marathon data for cards
             marathon_specific_data[marathon_name] = {
