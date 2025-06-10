@@ -432,7 +432,7 @@ def render_marathon_comparison_chart(brand_counts_by_marathon, highlight=None):
     Renders comparison charts for brand distribution across marathons.
     Refactored to use reusable chart components.
     """
-    st.subheader("🏁 Marcas por Prova (Comparativo)")
+    st.subheader("🏁 Marcas por Categoria (Comparativo)")
     
     if brand_counts_by_marathon.empty:
         st.caption("Não há dados de marcas por prova/pasta para este gráfico.")
