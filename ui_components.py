@@ -203,7 +203,7 @@ def page_header_with_logout(title, subtitle=None, key_suffix=""):
 def display_header():
     # Create header
     st.markdown(f"## 🏃 Análise de Provas (Pastas)")
-    st.caption("Aqui você pode gerar relatórios e exportá-los. Selecione as \"provas\" (pastas de imagens) que gostaria de analisar.")
+    st.caption("Selecione as \"provas\" (pastas de imagens) que gostaria de analisar. Os relatórios são gerados automaticamente.")
     
     # Add profile and logout to sidebar
     add_sidebar_profile_and_logout()
