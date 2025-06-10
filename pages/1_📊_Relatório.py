@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data_processing import process_queried_data_for_report # Updated function name
+from data_processing import process_queried_data_for_report, process_multiple_marathons_efficiently
 from ui_components import (
     page_header_with_logout,
     report_page_content_main, # This will be called with processed_metrics
@@ -56,6 +56,110 @@ if 'show_report_content_db' not in st.session_state:
                                             st.session_state.processed_report_data.get("total_images_selected", 0) > 0
 if 'show_pdf_preview_db' not in st.session_state:
     st.session_state.show_pdf_preview_db = False
+
+# --- Helper Functions for Optimized Processing ---
+@st.cache_data
+def get_individual_marathon_data_cached(marathon_id: int) -> dict:
+    """
+    Cache individual marathon data to avoid reprocessing.
+    Returns processed data for a single marathon.
+    """
+    df_flat, df_raw = get_data_for_selected_marathons_db([marathon_id])
+    return process_queried_data_for_report(df_flat, df_raw)
+
+def preprocess_individual_marathons(marathon_names: list) -> dict:
+    """
+    Efficiently preprocess data for multiple marathons in batch.
+    Returns a dict mapping marathon_name -> processed_data.
+    """
+    # Get marathon IDs
+    marathon_ids = [MARATHON_ID_MAP.get(name) for name in marathon_names if MARATHON_ID_MAP.get(name)]
+    
+    if not marathon_ids:
+        return {}
+    
+    # Use batch processing for maximum efficiency
+    with st.spinner("Processando dados individuais das provas..."):
+        _, individual_data = process_multiple_marathons_efficiently(marathon_ids)
+    
+    return individual_data
+
+def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
+    """
+    Render a single marathon's data in a column.
+    Reusable function for individual marathon visualization.
+    """
+    st.subheader(f"📊 {marathon_name}")
+    
+    # Create cards for this marathon
+    marathon_cards_data = {
+        marathon_name: marathon_data.get("marathon_specific_data_for_cards", {}).get(marathon_name, {})
+    }
+    
+    # Display marathon info card
+    render_marathon_info_cards(
+        [marathon_name], 
+        marathon_cards_data,
+        st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
+    )
+    
+    # Only show charts if there's meaningful data
+    has_brand_data = not marathon_data["brand_counts_all_selected"].empty
+    has_gender_data = not marathon_data["gender_brand_distribution"].empty
+    has_race_data = not marathon_data["race_brand_distribution"].empty
+    
+    if has_brand_data:
+        # Brand distribution
+        with st.expander("📊 Distribuição de Marcas", expanded=True):
+            render_brand_distribution_chart(
+                marathon_data["brand_counts_all_selected"],
+                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"])
+            )
+        
+        # Gender analysis
+        if has_gender_data:
+            with st.expander("👥 Análise por Gênero"):
+                render_gender_by_brand(marathon_data["gender_brand_distribution"], min_percentage_for_display=5.0)
+        
+        # Race analysis
+        if has_race_data:
+            with st.expander("🌍 Análise por Raça"):
+                render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
+        
+        # Top brands table
+        with st.expander("🏆 Top Marcas"):
+            render_top_brands_table(marathon_data["top_brands_all_selected"])
+    else:
+        st.info("📋 Nenhum dado de marcas disponível para esta prova.")
+
+def render_multiple_marathons_view(selected_marathons: list):
+    """
+    Efficiently render multiple marathons in columns.
+    """
+    st.subheader("🏃‍♂️ Análise Individual por Prova")
+    st.caption("Visualize os dados específicos de cada prova selecionada")
+    
+    # Preprocess all marathon data efficiently
+    individual_data = preprocess_individual_marathons(selected_marathons)
+    
+    # Create columns and render each marathon
+    cols = st.columns(len(selected_marathons))
+    
+    for i, marathon_name in enumerate(selected_marathons):
+        if marathon_name in individual_data:
+            with cols[i]:
+                render_individual_marathon_column(marathon_name, individual_data[marathon_name])
+    
+    # Show combined analysis after individual ones
+    st.markdown("---")
+    st.subheader("📈 Análise Combinada de Todas as Provas")
+    st.caption("Visualização agregada de todos os dados selecionados")
+    
+    with st.expander("📊 Relatório Completo", expanded=True):
+        report_page_content_main(
+            st.session_state.processed_report_data, 
+            st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {})
+        )
 
 # --- Main Report Page UI ---
 def report_page_db():
@@ -137,64 +241,15 @@ def report_page_db():
         render_pdf_preview_modal(st.session_state.processed_report_data, 
                                  st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
     elif st.session_state.show_report_content_db and st.session_state.selected_marathon_names_ui:
-        # Get each individual marathon data and display in columns
         selected_marathons = st.session_state.selected_marathon_names_ui
         
         if len(selected_marathons) == 1:
-            # If only one marathon is selected, display it normally
+            # Single marathon - show normal report
             report_page_content_main(st.session_state.processed_report_data, 
                                     st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
         else:
-            # If multiple marathons are selected, create columns for each one
-            st.subheader("Análise Individual por Prova")
-            st.caption("Visualize os dados específicos de cada prova selecionada")
-            
-            # Create columns for each marathon
-            cols = st.columns(len(selected_marathons))
-            
-            # Process each marathon and display in its own column
-            for i, marathon_name in enumerate(selected_marathons):
-                marathon_id = MARATHON_ID_MAP.get(marathon_name)
-                
-                if marathon_id:
-                    with cols[i]:                        
-                        # Get data for this specific marathon only
-                        with st.spinner(f"Carregando dados da prova {marathon_name}..."):
-                            df_flat, df_raw = get_data_for_selected_marathons_db([marathon_id])
-                            marathon_data = process_queried_data_for_report(df_flat, df_raw)
-                        
-                        # Create cards for just this marathon
-                        marathon_cards_data = {
-                            marathon_name: marathon_data.get("marathon_specific_data_for_cards", {}).get(marathon_name, {})
-                        }
-                        
-                        # Display this marathon's data
-                        render_marathon_info_cards(
-                            [marathon_name], 
-                            marathon_cards_data,
-                            st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
-                        )
-                        
-                        # Display brand distribution for this marathon
-                        if not marathon_data["brand_counts_all_selected"].empty:
-                            render_brand_distribution_chart(
-                                marathon_data["brand_counts_all_selected"],
-                                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"])
-                            )
-                            
-                        # Display gender data if available
-                        if not marathon_data["gender_brand_distribution"].empty:
-                            render_gender_by_brand(marathon_data["gender_brand_distribution"], min_percentage_for_display=5.0)
-                        
-                        st.markdown("---")
-                        
-                        render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
-
-                        st.markdown("---")
-                        render_marathon_comparison_chart(marathon_data["brand_counts_by_marathon"],
-                                                                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"]))
-
-                        render_top_brands_table(marathon_data["top_brands_all_selected"])
+            # Multiple marathons - use optimized rendering
+            render_multiple_marathons_view(selected_marathons)
     else:
         st.markdown("""
             <div style="text-align: center; padding: 50px;">

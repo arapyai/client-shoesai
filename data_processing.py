@@ -137,3 +137,40 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
         "marathon_specific_data_for_cards": marathon_specific_data_for_cards,
         "bulk_data" :  df_shoes_only,
     }
+
+def process_multiple_marathons_efficiently(marathon_ids_list):
+    """
+    Process multiple marathons efficiently in a single database call.
+    Returns both combined data and individual marathon data.
+    
+    Args:
+        marathon_ids_list: List of marathon IDs to process
+        
+    Returns:
+        tuple: (combined_data, individual_data_dict)
+    """
+    if not marathon_ids_list:
+        empty_data = process_queried_data_for_report(pd.DataFrame(), pd.DataFrame())
+        return empty_data, {}
+    
+    # Get all data in one call
+    from database import get_data_for_selected_marathons_db
+    df_flat_all, df_raw_all = get_data_for_selected_marathons_db(marathon_ids_list)
+    
+    # Process combined data
+    combined_data = process_queried_data_for_report(df_flat_all, df_raw_all)
+    
+    # Process individual marathon data efficiently
+    individual_data = {}
+    
+    # Group by marathon for individual processing
+    if 'marathon_name' in df_flat_all.columns and 'marathon_name' in df_raw_all.columns:
+        for marathon_name in df_flat_all['marathon_name'].unique():
+            # Filter data for this specific marathon
+            df_flat_single = df_flat_all[df_flat_all['marathon_name'] == marathon_name]
+            df_raw_single = df_raw_all[df_raw_all['marathon_name'] == marathon_name]
+            
+            # Process this marathon's data
+            individual_data[marathon_name] = process_queried_data_for_report(df_flat_single, df_raw_single)
+    
+    return combined_data, individual_data
