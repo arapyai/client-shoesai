@@ -11,6 +11,12 @@ if not st.session_state.get("logged_in", False):
     st.link_button("Ir para Login", "/")
     st.stop()
 
+#Only if user is admin in user_admin["is_admin"] field
+if not st.session_state.get("user_info", {}).get("is_admin", False):
+    st.error("Acesso negado. Esta página é restrita a administradores.")
+    st.link_button("Ir para Relatório", "/pages/1_%F0%9F%93%A5_Relat%C3%B3rio.py")
+    st.stop()
+
 if "user_info" not in st.session_state or not st.session_state.user_info.get("user_id"):
     st.error("Informações do usuário não encontradas. Por favor, faça login novamente.")
     st.link_button("Ir para Login", "/")

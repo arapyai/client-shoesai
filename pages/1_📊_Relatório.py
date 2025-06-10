@@ -138,12 +138,11 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
                 render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
         
         # Marathon comparison chart
-        if len(st.session_state.selected_marathon_names_ui) > 1:
-            with st.expander("📈 Comparação de Categorias"):
-                render_marathon_comparison_chart(
-                    marathon_data["brand_counts_by_category"],
-                    highlight=["Olympikus", "Mizuno"]  # Default highlights
-                )
+        with st.expander("📈 Comparação de Categorias"):
+            render_marathon_comparison_chart(
+                marathon_data["brand_counts_by_category"],
+                highlight=["Olympikus", "Mizuno"]  # Default highlights
+            )
         # Top brands table
         with st.expander("🏆 Top Marcas"):
             render_top_brands_table(marathon_data["top_brands_all_selected"])
@@ -177,10 +176,7 @@ def render_multiple_marathons_view(selected_marathons: list):
     elif viz_mode == "timeline":
         st.caption("Visualize a evolução das marcas ao longo do tempo nas provas selecionadas")
         render_timeline_view(selected_marathons)
-    else:  # categories
-        st.caption("Visualize a comparação das marcas por categoria nas provas selecionadas")
-        render_category_view(selected_marathons)
-
+    
 def render_columns_view(selected_marathons: list):
     """
     Render marathons in side-by-side columns (original approach).

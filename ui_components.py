@@ -511,6 +511,7 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: Dict[st
     has_brand_data = not marathon_data["brand_counts_all_selected"].empty
     has_gender_data = not marathon_data["gender_brand_distribution"].empty
     has_race_data = not marathon_data["race_brand_distribution"].empty
+    has_category_data = not marathon_data.get("brand_counts_by_category", pd.DataFrame()).empty
     
     if not has_brand_data:
         st.info("📋 Nenhum dado de marcas disponível para esta prova.")
@@ -534,7 +535,6 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: Dict[st
             render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
     
     # Category analysis (for single marathon showing different categories within it)
-    has_category_data = not marathon_data.get("brand_counts_by_category", pd.DataFrame()).empty
     if has_category_data:
         with st.expander("📏 Análise por Categoria"):
             render_category_comparison_chart(
@@ -713,18 +713,22 @@ def render_brand_timeline_chart(timeline_data: pd.DataFrame) -> None:
         y=alt.Y('percentage:Q', 
                 title='Participação (%)',
                 scale=alt.Scale(domain=[0, filtered_data['percentage'].max() * 1.1])),
+        stroke=alt.Stroke('brand:N',
+                          title='Marca',
+                          scale=color_scale,
+                          legend=None),
         color=alt.Color('brand:N', 
                        title='Marca',
-                       scale=color_scale),
+                       scale=color_scale,
+                       legend=alt.Legend(orient='right', title=None)),
         tooltip=[
             alt.Tooltip('marathon_name:N', title='Prova'),
             alt.Tooltip('event_date:T', title='Data', format='%d/%m/%Y'),
             alt.Tooltip('brand:N', title='Marca'),
             alt.Tooltip('percentage:Q', title='Participação (%)', format='.1f'),
-            alt.Tooltip('count:Q', title='Contagem')
         ]
     ).properties(
-        height=400,
+        height=450,
         title=alt.TitleParams(
             text="Evolução da Participação das Marcas por Prova",
             anchor='start'
@@ -907,9 +911,7 @@ def render_category_timeline_chart(timeline_data: pd.DataFrame) -> None:
             alt.Tooltip('marathon_name:N', title='Prova'),
             alt.Tooltip('category:N', title='Categoria'),
             alt.Tooltip('brand:N', title='Marca'),
-            alt.Tooltip('percentage:Q', title='Participação (%)', format='.1f'),
-            alt.Tooltip('count:Q', title='Contagem')
-        ]
+            alt.Tooltip('percentage:Q', title='Participação (%)', format='.1f')        ]
     ).properties(
         height=400,
         title=alt.TitleParams(

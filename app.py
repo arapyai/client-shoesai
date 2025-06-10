@@ -3,7 +3,7 @@ import streamlit as st
 from database import verify_user, create_tables # Ensure create_tables is callable if run directly
 
 # Page config should be the first Streamlit command
-st.set_page_config(page_title="CourtShoes AI Login", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Shoes.AI Login", initial_sidebar_state="collapsed")
 
 def login_page():
     st.markdown("""
@@ -27,22 +27,19 @@ def login_page():
         # st.stop() # No need for st.stop() after st.switch_page
 
     st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    main_cols = st.columns([0.8, 1.2], gap="large")
+    main_cols = st.columns([1, 1], gap="large")
 
     with main_cols[0]:
-        st.image("https://storage.googleapis.com/proudcity/mebanenc/uploads/2021/03/placeholder-image.png", 
-                 caption="CourtShoes AI", use_container_width=True)
-
+        st.image("assets/images/intro.png", caption=None, output_format="auto")
     with main_cols[1]:
-        st.markdown("<div class='login-form-column'>", unsafe_allow_html=True)
-        st.markdown("<div class='logo-text'>T<span style='visibility:hidden;'>A</span>L<span style='visibility:hidden;'>L</span>K</div>", unsafe_allow_html=True)
+        st.image("assets/images/logo.png", caption=None, width=100, output_format="auto")
         st.subheader("Bem vindo")
         st.caption("Para ter acesso ao painel, você precisa entrar com suas credenciais")
 
-        with st.form("login_form_main_page"):
+        with st.form("login_form_main_page", border=False):
             email = st.text_input("Email", placeholder="Digite seu email", key="login_email_main_form")
             password = st.text_input("Senha", type="password", placeholder="Digite sua senha", key="login_password_main_form")
-            login_button = st.form_submit_button("Entrar")
+            login_button = st.form_submit_button("Entrar", use_container_width=True, type="primary")
 
             if login_button:
                 if not email or not password:
@@ -58,9 +55,9 @@ def login_page():
                     else:
                         st.error("Email ou senha inválidos.")
         
-        st.markdown("<a href='#' style='text-decoration: none; color: #007bff; display: block; text-align: center; margin-top: 10px;'>Esqueceu a senha?</a>", unsafe_allow_html=True)
+        st.markdown("<a href='#' style='text-decoration: none; color: #007bff; display: block; text-align: left; margin-top: 10px;'>Esqueceu a senha?</a>", unsafe_allow_html=True)
         st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
-        st.caption("© Copyright 2024 Talk Digital. Todos os direitos reservados.")
+        st.caption("© Copyright 2025 Talk. Todos os direitos reservados.")
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
