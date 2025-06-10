@@ -3,14 +3,15 @@ import pandas as pd
 from data_processing import process_queried_data_for_report, process_multiple_marathons_efficiently
 from ui_components import (
     page_header_with_logout,
-    report_page_content_main, # This will be called with processed_metrics
-    render_pdf_preview_modal,   # This will also be called with processed_metrics
+    report_page_content_main,
+    render_pdf_preview_modal,
     render_marathon_info_cards,
     render_brand_distribution_chart,
     render_gender_by_brand,
     render_top_brands_table,
     render_race_by_brand,
-    render_marathon_comparison_chart
+    render_marathon_comparison_chart,
+    render_individual_marathon_column
 )
 from database import get_marathon_list_from_db, get_data_for_selected_marathons_db
 
@@ -126,6 +127,12 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
             with st.expander("🌍 Análise por Raça"):
                 render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
         
+        # Marathon comparison chart
+        if len(st.session_state.selected_marathon_names_ui) > 1:
+            with st.expander("📈 Comparação de Provas"):
+                render_marathon_comparison_chart(
+                    marathon_data["brand_counts_by_marathon"], highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"]),
+                )
         # Top brands table
         with st.expander("🏆 Top Marcas"):
             render_top_brands_table(marathon_data["top_brands_all_selected"])
@@ -134,9 +141,9 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
 
 def render_multiple_marathons_view(selected_marathons: list):
     """
-    Efficiently render multiple marathons in columns.
+    Efficiently render multiple marathons in columns only.
     """
-    st.subheader("🏃‍♂️ Análise Individual por Prova")
+    st.subheader("🏃‍♂️ Análise por Prova")
     st.caption("Visualize os dados específicos de cada prova selecionada")
     
     # Preprocess all marathon data efficiently
@@ -149,17 +156,6 @@ def render_multiple_marathons_view(selected_marathons: list):
         if marathon_name in individual_data:
             with cols[i]:
                 render_individual_marathon_column(marathon_name, individual_data[marathon_name])
-    
-    # Show combined analysis after individual ones
-    st.markdown("---")
-    st.subheader("📈 Análise Combinada de Todas as Provas")
-    st.caption("Visualização agregada de todos os dados selecionados")
-    
-    with st.expander("📊 Relatório Completo", expanded=True):
-        report_page_content_main(
-            st.session_state.processed_report_data, 
-            st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {})
-        )
 
 # --- Main Report Page UI ---
 def report_page_db():
@@ -243,13 +239,8 @@ def report_page_db():
     elif st.session_state.show_report_content_db and st.session_state.selected_marathon_names_ui:
         selected_marathons = st.session_state.selected_marathon_names_ui
         
-        if len(selected_marathons) == 1:
-            # Single marathon - show normal report
-            report_page_content_main(st.session_state.processed_report_data, 
-                                    st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
-        else:
-            # Multiple marathons - use optimized rendering
-            render_multiple_marathons_view(selected_marathons)
+        # Always use the optimized column-based rendering
+        render_multiple_marathons_view(selected_marathons)
     else:
         st.markdown("""
             <div style="text-align: center; padding: 50px;">
