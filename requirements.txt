@@ -2,3 +2,11 @@ streamlit
 pandas
 passlib
 altair
+
+# Database abstraction and drivers
+sqlalchemy>=2.0.0
+pymysql  # For MySQL support
+psycopg2-binary  # For PostgreSQL support
+
+# Environment variable management
+python-dotenv
