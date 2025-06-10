@@ -116,7 +116,7 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
     
     brand_counts_by_marathon = pd.DataFrame()
     if not df_shoes_only.empty and 'marathon_name' in df_shoes_only.columns and 'shoe_brand' in df_shoes_only.columns:
-        brand_counts_by_marathon = df_shoes_only.groupby('marathon_name')['shoe_brand'].value_counts().unstack(fill_value=0)
+        brand_counts_by_marathon = df_shoes_only.groupby('category')['shoe_brand'].value_counts().unstack(fill_value=0)
 
     return {
         "total_images_selected": total_images_selected,
@@ -134,5 +134,6 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
         "race_brand_distribution": race_brand_dist,
         "brand_counts_by_marathon": brand_counts_by_marathon,
         "total_persons_by_marathon": total_persons_by_marathon,
-        "marathon_specific_data_for_cards": marathon_specific_data_for_cards # Added this
+        "marathon_specific_data_for_cards": marathon_specific_data_for_cards,
+        "bulk_data" :  df_shoes_only,
     }

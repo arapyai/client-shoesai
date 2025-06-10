@@ -4,7 +4,13 @@ from data_processing import process_queried_data_for_report # Updated function n
 from ui_components import (
     page_header_with_logout,
     report_page_content_main, # This will be called with processed_metrics
-    render_pdf_preview_modal   # This will also be called with processed_metrics
+    render_pdf_preview_modal,   # This will also be called with processed_metrics
+    render_marathon_info_cards,
+    render_brand_distribution_chart,
+    render_gender_by_brand,
+    render_top_brands_table,
+    render_race_by_brand,
+    render_marathon_comparison_chart
 )
 from database import get_marathon_list_from_db, get_data_for_selected_marathons_db
 
@@ -102,13 +108,12 @@ def report_page_db():
        "top_brands_all_selected" in st.session_state.processed_report_data and \
        not st.session_state.processed_report_data["top_brands_all_selected"].empty:
         csv_data_str = st.session_state.processed_report_data["top_brands_all_selected"].to_csv(index=False).encode('utf-8')
-        can_export_csv_flag = True
+        can_export_csv_flag = False
 
-    with cols_actions[2]:
+    with cols_actions[2]: #disabled=disable_export_buttons desabilitado temporariamente
         if st.button("Exportar PDF", use_container_width=True,
-                      disabled=disable_export_buttons, key="export_pdf_db_btn_main"):
+                      disabled=True, key="export_pdf_db_btn_main"):
             st.session_state.show_pdf_preview_db = True
-            # st.rerun() # st.dialog will open
 
     with cols_actions[3]:
         st.download_button(
@@ -123,7 +128,8 @@ def report_page_db():
     st.markdown("---")
 
     # --- Display Content or Modal ---
-    # Data for cards needs to be passed specifically for selected marathons
+    # Data for cards needs to be p
+    #if debug=True in url parameters, show raw dataassed specifically for selected marathons
     # `processed_report_data` already contains `marathon_specific_data_for_cards`
     
     if st.session_state.show_pdf_preview_db and st.session_state.show_report_content_db:
@@ -131,8 +137,64 @@ def report_page_db():
         render_pdf_preview_modal(st.session_state.processed_report_data, 
                                  st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
     elif st.session_state.show_report_content_db and st.session_state.selected_marathon_names_ui:
-        report_page_content_main(st.session_state.processed_report_data, 
-                                 st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
+        # Get each individual marathon data and display in columns
+        selected_marathons = st.session_state.selected_marathon_names_ui
+        
+        if len(selected_marathons) == 1:
+            # If only one marathon is selected, display it normally
+            report_page_content_main(st.session_state.processed_report_data, 
+                                    st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
+        else:
+            # If multiple marathons are selected, create columns for each one
+            st.subheader("Análise Individual por Prova")
+            st.caption("Visualize os dados específicos de cada prova selecionada")
+            
+            # Create columns for each marathon
+            cols = st.columns(len(selected_marathons))
+            
+            # Process each marathon and display in its own column
+            for i, marathon_name in enumerate(selected_marathons):
+                marathon_id = MARATHON_ID_MAP.get(marathon_name)
+                
+                if marathon_id:
+                    with cols[i]:                        
+                        # Get data for this specific marathon only
+                        with st.spinner(f"Carregando dados da prova {marathon_name}..."):
+                            df_flat, df_raw = get_data_for_selected_marathons_db([marathon_id])
+                            marathon_data = process_queried_data_for_report(df_flat, df_raw)
+                        
+                        # Create cards for just this marathon
+                        marathon_cards_data = {
+                            marathon_name: marathon_data.get("marathon_specific_data_for_cards", {}).get(marathon_name, {})
+                        }
+                        
+                        # Display this marathon's data
+                        render_marathon_info_cards(
+                            [marathon_name], 
+                            marathon_cards_data,
+                            st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
+                        )
+                        
+                        # Display brand distribution for this marathon
+                        if not marathon_data["brand_counts_all_selected"].empty:
+                            render_brand_distribution_chart(
+                                marathon_data["brand_counts_all_selected"],
+                                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"])
+                            )
+                            
+                        # Display gender data if available
+                        if not marathon_data["gender_brand_distribution"].empty:
+                            render_gender_by_brand(marathon_data["gender_brand_distribution"], min_percentage_for_display=5.0)
+                        
+                        st.markdown("---")
+                        
+                        render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
+
+                        st.markdown("---")
+                        render_marathon_comparison_chart(marathon_data["brand_counts_by_marathon"],
+                                                                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"]))
+
+                        render_top_brands_table(marathon_data["top_brands_all_selected"])
     else:
         st.markdown("""
             <div style="text-align: center; padding: 50px;">

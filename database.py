@@ -45,6 +45,7 @@ def create_tables():
         image_id INTEGER PRIMARY KEY AUTOINCREMENT,
         marathon_id INTEGER NOT NULL,
         filename TEXT NOT NULL,
+        category TEXT, -- This can be used to store the folder or label
         original_width INTEGER,
         original_height INTEGER,
         FOREIGN KEY (marathon_id) REFERENCES Marathons(marathon_id),
@@ -176,6 +177,7 @@ def insert_parsed_json_data(marathon_id, parsed_json_data_list):
     image_id_cache = {} # To store image_id for (marathon_id, filename)
 
     for image_record_dict in parsed_json_data_list:
+        img_category = image_record_dict.get('folder') #trocar por label depois
         img_filename = image_record_dict.get('filename')
         if not img_filename:
             print("Skipping record with no filename.")
@@ -189,9 +191,9 @@ def insert_parsed_json_data(marathon_id, parsed_json_data_list):
         else:
             try:
                 cursor.execute("""
-                    INSERT INTO Images (marathon_id, filename, original_width, original_height)
-                    VALUES (?, ?, ?, ?)
-                """, (marathon_id, img_filename, image_record_dict.get('original_width'), image_record_dict.get('original_height')))
+                    INSERT INTO Images (marathon_id, filename, original_width, original_height, category)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (marathon_id, img_filename, image_record_dict.get('original_width'), image_record_dict.get('original_height'), img_category))
                 current_image_id = cursor.lastrowid
                 image_id_cache[image_key] = current_image_id
             except sqlite3.IntegrityError: # Should not happen if cache logic is correct, but as safeguard
@@ -294,6 +296,7 @@ def get_data_for_selected_marathons_db(marathon_ids_list):
             m.name as marathon_name,
             i.image_id,
             i.filename,
+            i.category,
             s.brand as shoe_brand,
             s.probability as shoe_prob,
             s.confidence as shoe_confidence,
@@ -314,6 +317,7 @@ def get_data_for_selected_marathons_db(marathon_ids_list):
             m.marathon_id,
             m.name as marathon_name,
             i.filename,
+            i.category,
             i.original_width,
             i.original_height,
             (SELECT COUNT(*) FROM PersonDemographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics

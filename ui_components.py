@@ -167,9 +167,9 @@ def render_executive_summary(data):
                    help=f"{data['total_shoes_detected']} tênis no total analisados nas provas selecionadas.",
                    border=True)
     with cols2[1]:
-        st.metric(label="Intervalo de Confiança",
-                  value="98% (mock)",
-                  help="Nível de confiança e margem de erro calculada (mock)",
+        st.metric(label="Margem de Erro",
+                  value="+- 5%",
+                  help="Margem de erro estimada com base na amostra de dados coletados.",
                   border=True)
 
     st.markdown("---")
@@ -195,163 +195,58 @@ def render_processing_stats(data):
         st.metric("Data/Hora Processamento", "04/05/2025 22:00 (mock)", help="Tempo total: 8 horas (mock)", border=True)
     st.markdown("---")
 
-def render_brand_distribution_chart(brand_counts):
+def render_brand_distribution_chart(brand_counts, highlight=None):
+    """
+    Renders a bar chart showing brand distribution with percentages.
+    
+    Args:
+        brand_counts (pd.DataFrame): DataFrame containing brand count data
+        highlight (list, optional): List of brand names to highlight with a different color
+    """
     st.subheader("📊 Distribuição de Marcas (Global nas Provas Selecionadas)")
-    col1, col2 = st.columns([3,1])
-    with col1:
-        if not brand_counts.empty:
-            st.bar_chart(brand_counts)
-        else:
-            st.caption("Nenhuma marca detectada para gerar o gráfico.")
-    with col2:
-        st.metric(label="Nível de Confiança", value="98% (mock)", help="Nível de confiança e margem de erro calculada (mock)", border=True)
-        st.metric(label="Margem de Erro", value="± 2% (mock)", help="Nível de confiança e margem de erro calculada (mock)", border=True)
-
-def render_gender_percentage_by_brand_faceted(gender_brand_data: pd.DataFrame, 
-                                              title="📊 Distribuição Percentual de Gênero por Marca"):
-    """
-    Renders faceted bar charts showing the percentage of each gender within each brand.
-    Each facet is a brand, and bars within show gender percentages for that brand.
-
-    Args:
-        gender_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
-                                          columns are gender categories (e.g., 'Masculino', 'Feminino'),
-                                          and values are absolute counts.
-        title (str): The title for the chart section.
-    """
-    st.subheader(title)
-
-    if gender_brand_data is None or gender_brand_data.empty:
-        st.caption("Não há dados de gênero e marca para exibir.")
-        return
-
-    # Ensure index is named
-    if gender_brand_data.index.name is None:
-        gender_brand_data.index.name = "shoe_brand"
-    
-    brand_col_name = gender_brand_data.index.name
-
-    # Melt the DataFrame to long format
-    df_long = gender_brand_data.reset_index().melt(
-        id_vars=brand_col_name,
-        var_name="gender",
-        value_name="count"
-    )
-
-    if df_long.empty or df_long['count'].sum() == 0:
-        st.caption("Não há dados processados de gênero e marca para exibir.")
-        return
-
-    # Calculate percentage of each gender within each brand
-    df_long_percent = df_long.copy()
-    df_long_percent['percentage'] = df_long_percent.groupby(brand_col_name)['count'] \
-                                     .apply(lambda x: x / x.sum() if x.sum() > 0 else 0)
-
-    # Determine sort order for facets (brands) - e.g., by total count descending
-    brand_total_counts = gender_brand_data.sum(axis=1).sort_values(ascending=False)
-    facet_sort_order = brand_total_counts.index.tolist()
-
-    chart = alt.Chart(df_long_percent).mark_bar().encode(
-        x=alt.X('gender:N', title="Gênero", axis=alt.Axis(labels=False, ticks=False, titlePadding=10), sort=alt.SortField("gender", order="ascending")), # Keep gender order consistent
-        y=alt.Y('percentage:Q', title="Percentual da Marca", axis=alt.Axis(format='%')),
-        color=alt.Color('gender:N', title="Gênero"),
-        tooltip=[
-            alt.Tooltip(f'{brand_col_name}:N', title="Marca"),
-            alt.Tooltip('gender:N', title="Gênero"),
-            alt.Tooltip('count:Q', title="Contagem Absoluta", format=",.0f"),
-            alt.Tooltip('percentage:Q', title="Percentual na Marca", format=".1%")
-        ]
-    ).properties(
-        width=80, # Adjust width of individual facet plots
-        height=200
-    ).facet(
-        facet=alt.Facet(f'{brand_col_name}:N', title=None, columns=4, sort=facet_sort_order), # Adjust columns as needed
-        title=None # Overall title handled by st.subheader
-    ).configure_facet(
-        spacing=20
-    ).configure_view(
-        stroke=None # Remove borders from individual facet views
-    ).configure_header(
-        labelOrient='bottom',
-        labelFontSize=12,
-        title=None # Remove facet titles if brand name is clear
-    )
-    
-    st.altair_chart(chart, use_container_width=False) # use_container_width=False if facets define total width
-    st.caption("Cada grupo de barras representa uma marca, mostrando a distribuição percentual de gênero dentro dessa marca.")
-
-
-def render_brand_distribution_by_gender_pie(gender_brand_data: pd.DataFrame, 
-                                            title="🥧 Distribuição de Marcas por Gênero"):
-    """
-    Renders a pie chart for each gender, showing the distribution of brands within that gender.
-    The order of brands (slices) is kept consistent across pie charts.
-
-    Args:
-        gender_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
-                                          columns are gender categories (e.g., 'Masculino', 'Feminino'),
-                                          and values are absolute counts.
-        title (str): The title for the chart section.
-    """
-    st.subheader(title)
-
-    if gender_brand_data is None or gender_brand_data.empty:
-        st.caption("Não há dados de gênero e marca para exibir.")
-        return
-
-    if gender_brand_data.index.name is None:
-        gender_brand_data.index.name = "shoe_brand"
-    brand_col_name = gender_brand_data.index.name
-
-    gender_columns = gender_brand_data.columns.tolist()
-    
-    # Determine a consistent sort order for brands (slices in pie charts)
-    # e.g., by total count across all genders, descending
-    overall_brand_totals = gender_brand_data.sum(axis=1).sort_values(ascending=False)
-    brand_sort_order = overall_brand_totals.index.tolist()
-    
-    max_charts_per_row = 3
-    cols = create_column_grid(len(gender_columns), max_charts_per_row)
-
-    for i, gender in enumerate(gender_columns):
-        with cols[i]:
-            st.markdown(f"<p style='text-align: center; font-weight: bold;'>{gender}</p>", unsafe_allow_html=True)
-            
-            # Data for this gender's pie chart
-            pie_data = gender_brand_data[[gender]].reset_index()
-            pie_data = pie_data.rename(columns={gender: 'count', brand_col_name: 'brand'})
-            pie_data = pie_data[pie_data['count'] > 0] # Only include brands with counts for this gender
-
-            if pie_data.empty:
-                st.caption(f"Sem dados para {gender}.")
-                continue
-
-            pie_chart = alt.Chart(pie_data).mark_arc(innerRadius=30).encode(
-                theta=alt.Theta(field="count", type="quantitative", stack=True),
-                color=alt.Color(
-                    field="brand",
-                    type="nominal",
-                    sort=brand_sort_order,  # Apply consistent brand sort order
-                    scale=alt.Scale(
-                        domain=["female", "male"],  # Specify the brands you want to color explicitly
-                        range=["lightpink", "lightblue"]  # Specify the colors for those brands
-                        # Altair will use its default color scheme for any other brands not listed in the domain
-                    )),
-                tooltip=[
-                    alt.Tooltip("brand:N", title="Marca"),
-                    alt.Tooltip("count:Q", title="Contagem", format=",.0f"),
-                    alt.Tooltip("percentage:Q", title="Percentual no Gênero", format=".1%"), # Requires transform
-                ]
-            ).transform_joinaggregate(
-                total_gender_count='sum(count)', # Total count for the current gender
-            ).transform_calculate(
-                percentage = alt.datum.count / alt.datum.total_gender_count
-            ).properties(
-                width=250, # Adjust as needed or let Streamlit manage
-                height=250
+    if not brand_counts.empty:
+        # Sort by value descending (higher to lower share)
+        sorted_counts = brand_counts.sort_values(ascending=False)
+        
+        # Calculate percentages
+        total = sorted_counts.sum()
+        percentages = (sorted_counts / total * 100).round(1)
+        
+        # Create a DataFrame for Altair
+        chart_data = pd.DataFrame({
+            'Marca': percentages.index,
+            'Percentual': percentages.values
+        })
+        
+        # Create color condition based on highlight parameter
+        if highlight and isinstance(highlight, list):
+            # Create a condition using a proper Vega expression 
+            # Use a test expression to check if the current brand is in the highlight list
+            highlight_brands_str = ', '.join([f'"{brand}"' for brand in highlight])
+            color_condition = alt.condition(
+                f"indexof([{highlight_brands_str}], datum.Marca) >= 0",  # Vega expression to check if in list
+                alt.value('#ff6b6b'),  # highlighted color
+                alt.value('#1f77b4')   # default color
             )
-            st.altair_chart(pie_chart, use_container_width=True)
-    st.caption("Cada gráfico de pizza representa um gênero, mostrando a distribuição percentual das marcas para esse gênero.")
+        else:
+            color_condition = alt.value('#1f77b4')  # default color for all
+        
+        # Create the bar chart with Altair
+        chart = alt.Chart(chart_data).mark_bar().encode(
+            y=alt.Y('Marca:N', sort='-x', title='Marca'),
+            x=alt.X('Percentual:Q', title='Percentual (%)', scale=alt.Scale(domain=[0, 50])),
+            color=color_condition,
+            tooltip=[
+                alt.Tooltip('Marca:N', title='Marca'),
+                alt.Tooltip('Percentual:Q', title='Percentual (%)', format='.1f')
+            ]
+        ).properties(
+            height=400
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.caption("Nenhuma marca detectada para gerar o gráfico.")
         
 def render_segmentation_chart(data_dist, title, demographic_col_name_for_legend):
     """
@@ -447,12 +342,60 @@ def render_segmentation_chart(data_dist, title, demographic_col_name_for_legend)
 
     st.altair_chart(grouped_chart, use_container_width=True)
 
-def render_marathon_comparison_chart(brand_counts_by_marathon):
-    st.subheader("🏁 Marcas por Prova/Pasta (Comparativo)")
+def render_marathon_comparison_chart(brand_counts_by_marathon, highlight=None):
+    st.subheader("🏁 Marcas por Prova (Comparativo)")
+    #iterate on each index and create a bar chart for each marathon displaying the brands with their percentage
     if not brand_counts_by_marathon.empty:
-        # Transpose for better readability if marathons are few and brands many
-        # Or keep as is if brands are few and marathons many
-        st.bar_chart(brand_counts_by_marathon.T, height=max(400, len(brand_counts_by_marathon.columns) * 30))
+        for marathon_name, counts in brand_counts_by_marathon.iterrows():
+            total_count = counts.sum()
+            if total_count == 0:
+                st.caption(f"Não há dados de marcas para a prova '{marathon_name}'.")
+                continue
+            # Create a DataFrame for the current marathon
+            marathon_data = pd.DataFrame({
+                'Marca': counts.index,
+                'Contagem': counts.values,
+                'Percentual': (counts / total_count * 100).round(1)
+            }).reset_index(drop=True)
+            # Filter out zero counts
+            marathon_data = marathon_data[marathon_data['Contagem'] > 0]
+            if marathon_data.empty:
+                st.caption(f"Não há marcas detectadas para a prova '{marathon_name}'.")
+                continue
+            # Create the bar chart for this marathon
+            # Sort by count descending
+            marathon_data = marathon_data.sort_values(by='Contagem', ascending=False)
+
+    
+            if highlight and isinstance(highlight, list):
+                # Create a condition using a proper Vega expression 
+                # Use a test expression to check if the current brand is in the highlight list
+                highlight_brands_str = ', '.join([f'"{brand}"' for brand in highlight])
+                color_condition = alt.condition(
+                    f"indexof([{highlight_brands_str}], datum.Marca) >= 0",  # Vega expression to check if in list
+                    alt.value('#ff6b6b'),  # highlighted color
+                    alt.value('#1f77b4')   # default color
+                )
+            else:
+                color_condition = alt.value('#1f77b4')  # default color for all
+        
+            chart = alt.Chart(marathon_data).mark_bar().encode(
+                y=alt.Y('Marca:N', title='Marca', sort='-x'),
+                x=alt.X('Percentual:Q', title='Percentual (%)', scale=alt.Scale(domain=[0, 50])),
+                color=color_condition,
+                tooltip=[
+                    alt.Tooltip('Marca:N', title='Marca'),
+                    alt.Tooltip('Percentual:Q', title='Percentual (%)', format='.1f')
+                ]
+            ).properties(
+                title=f"{marathon_name}",
+                height=400
+            )
+            st.altair_chart(chart, use_container_width=True)
+            st.caption(f"Prova {marathon_name}")
+
+            if marathon_name != brand_counts_by_marathon.index[-1]:
+                st.markdown("---")
     else:
          st.caption("Não há dados de marcas por prova/pasta para este gráfico.")
 
@@ -473,7 +416,7 @@ def report_page_content_main(processed_metrics, marathon_specific_data_for_cards
     if processed_metrics.get("total_images_selected", 0) == 0: # Check if key exists
         st.warning("Nenhuma imagem nos dados selecionados para gerar o relatório.")
         return
-
+    
     # Get the list of selected marathon names from the keys of marathon_specific_data_for_cards
     selected_marathon_names = list(processed_metrics.get("marathon_specific_data_for_cards", {}).keys())
     
@@ -489,18 +432,20 @@ def report_page_content_main(processed_metrics, marathon_specific_data_for_cards
     st.markdown("---")
     render_executive_summary(processed_metrics)
     render_processing_stats(processed_metrics)
-    render_brand_distribution_chart(processed_metrics["brand_counts_all_selected"])
+    render_brand_distribution_chart(
+        processed_metrics["brand_counts_all_selected"],
+        highlight=processed_metrics.get("highlight_brands", ["Olympikus", "Mizuno"])
+    )
     
     st.markdown("---")
-    render_brand_distribution_by_gender_pie(processed_metrics["gender_brand_distribution"], 
-                              "🚻 Segmentação por Gênero (Marcas)")
+    render_gender_by_brand(processed_metrics["gender_brand_distribution"], min_percentage_for_display=5.0)
     
     st.markdown("---")
-    render_race_distribution_horizontal_stacked_bars(processed_metrics["race_brand_distribution"], 
-                              "🧑🏾‍🤝‍🧑🏼 Segmentação por Raça/Etnia (Marcas)")
+    render_race_by_brand(processed_metrics["race_brand_distribution"], min_percentage_for_display=5.0)
 
     st.markdown("---")
-    render_marathon_comparison_chart(processed_metrics["brand_counts_by_marathon"])
+    render_marathon_comparison_chart(processed_metrics["brand_counts_by_marathon"],
+                                             highlight=processed_metrics.get("highlight_brands", ["Olympikus", "Mizuno"]))
 
     st.markdown("---")
     render_top_brands_table(processed_metrics["top_brands_all_selected"])
@@ -522,81 +467,245 @@ def render_pdf_preview_modal(processed_metrics, marathon_specific_data_for_cards
             st.session_state.show_pdf_preview_db = False
             st.rerun()
 
-def render_race_distribution_horizontal_stacked_bars(race_brand_data: pd.DataFrame, 
-                                      title="🧑🏾‍🤝‍🧑🏼 Distribuição de Raça/Etnia por Marca"):
+def render_gender_by_brand(gender_brand_data: pd.DataFrame, min_percentage_for_display=2.0):
     """
-    Renders a horizontal stacked bar chart showing the distribution of races/ethnicities across brands.
+    Renders a horizontal stacked barplot showing the gender breakdown for each brand.
     
     Args:
-        race_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
-                                       columns are race/ethnicity categories,
-                                       and values are absolute counts.
-        title (str): The title for the chart section.
+        gender_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
+                                          columns are gender categories (e.g., 'Masculino', 'Feminino'),
+                                          and values are absolute counts.
+        min_percentage_for_display (float): Minimum percentage a brand must have to be displayed individually.
+                                            Brands below this threshold will be grouped as 'Outros'.
     """
-    st.subheader(title)
+    st.subheader("🚻 Contagem de Tênis por Marca e Gênero")
 
-    if race_brand_data is None or race_brand_data.empty:
-        st.caption("Não há dados de raça/etnia e marca para exibir.")
+    if gender_brand_data is None or gender_brand_data.empty:
+        st.caption("Não há dados de gênero e marca para exibir.")
         return
 
-    # Ensure index is named
-    if race_brand_data.index.name is None:
-        race_brand_data.index.name = "shoe_brand"
+    # Make a copy to avoid modifying the original DataFrame
+    data = gender_brand_data.copy()
+    data = data.T
     
-    race_col_name = race_brand_data.index.name
+    # Ensure index is named
+    if data.index.name is None:
+        data.index.name = "shoe_brand"
+    brand_col_name = data.index.name
 
+    # Calculate total counts for each brand
+    data['total'] = data.sum(axis=1)
+    total_shoes = data['total'].sum()
+    
+    # Calculate percentage for each brand
+    data['percentage'] = (data['total'] / total_shoes) * 100
+    
+    # Identify brands to be included in 'Outros'
+    small_brands = data[data['percentage'] < min_percentage_for_display].index
+    
+    # If we have small brands, group them into 'Outros'
+    if len(small_brands) > 0:
+        # Create a new row 'Outros' with the sum of all small brands
+        others_row = data.loc[small_brands].sum()
+        
+        # Remove small brands from the original DataFrame
+        data = data.drop(small_brands)
+        
+        # Add the 'Outros' row
+        data.loc['Outros'] = others_row
+    
+    # Sort by total count (descending)
+    
+    # Remove helper columns before converting to long format
+    data = data.drop(['total', 'percentage'], axis=1)
+    
     # Melt the DataFrame to long format for Altair
-    df_long = race_brand_data.reset_index().melt(
-        id_vars=race_col_name,
-        var_name="marca",
+    df_long = data.reset_index().melt(
+        id_vars=brand_col_name,
+        var_name="gender",
         value_name="count"
     )
-
-    if df_long.empty or df_long['count'].sum() == 0:
-        st.caption("Não há dados processados de raça/etnia e marca para exibir.")
-        return
-
-    # Sort brands by total count for better visualization
-    race_totals = race_brand_data.sum(axis=1).sort_values(ascending=False)
-    sorted_races = race_totals.index.tolist()
     
-    # Create a horizontal stacked bar chart using Altair
-    chart = alt.Chart(df_long).mark_bar().encode(
-        # Y-axis: race ordered by total count
-        y=alt.Y(f'{race_col_name}:N', 
+    if df_long.empty or df_long['count'].sum() == 0:
+        st.caption("Não há dados processados de gênero e marca para exibir.")
+        return
+    
+    # Calculate percentage within each brand for stacked bars
+    df_long_percent = df_long.copy()
+    # Add total count per brand for calculations
+    brand_totals = df_long.groupby(brand_col_name)['count'].sum().reset_index()
+    brand_totals.columns = [brand_col_name, 'brand_total']
+    
+    # Merge to get the brand totals
+    df_long_percent = pd.merge(df_long_percent, brand_totals, on=brand_col_name)
+    # Calculate percentage within brand
+    df_long_percent['percentage'] = df_long_percent['count'] / df_long_percent['brand_total']
+    
+    # Get sorted brand order based on totals
+    brand_sort_order = brand_totals.sort_values('brand_total', ascending=False)[brand_col_name].tolist()
+    
+    # Create a horizontal stacked bar chart for gender distribution
+    bar_chart = alt.Chart(df_long_percent).mark_bar().encode(
+        # Y-axis: brands ordered by total count
+        y=alt.Y(f'{brand_col_name}:N', 
                 title='Marca',
-                sort=sorted_races,  # Sort races by total count
-                axis=alt.Axis(labelLimit=200)),  # Ensure race labels are visible
+                sort=brand_sort_order,
+                axis=alt.Axis(labelLimit=200)),  # Ensure brand labels are visible
         
-        # X-axis: stacked count
-        x=alt.X('count:Q', 
+        # X-axis: percentage of counts stacked
+        x=alt.X('percentage:Q',
+                axis=alt.Axis(format='%'),
                 title='Contagem',
-                stack='normalize'),  # Stack the bars
+                stack=True),# Stack the values
         
-        # Color by race/ethnicity
-        color=alt.Color('marca:N', 
-                        title='Marca'),
+        # Color by gender
+        color=alt.Color('gender:N', 
+                        title='Gênero',
+                        scale=alt.Scale(
+                            domain=["male", "female"],  # Ensure consistent color mapping
+                            range=["#1f77b4", "#990785"]  # Custom colors for a
+                            # consistent look
+                        )),
+
         
         # Order of stacking (consistent across brands)
-        order=alt.Order('marca:N', sort='ascending'),
+        order=alt.Order('gender:N', sort='descending'),
         
         # Tooltips for interactive exploration
         tooltip=[
-            alt.Tooltip(f'{race_col_name}:N', title='Raça/Etnia'),
-            alt.Tooltip('marca:N', title='Marca'),
-            alt.Tooltip('count:Q', title='Contagem', format=',d'),
-            alt.Tooltip('percentage:Q', title='Percentual da Marca', format='.1%')
+            alt.Tooltip(f'{brand_col_name}:N', title='Marca'),
+            alt.Tooltip('gender:N', title='Gênero'),
+            alt.Tooltip('percentage:Q', title='Percentual na Marca', format='.1%')
         ]
-    ).transform_joinaggregate(
-        total='sum(count)',
-        groupby=[race_col_name]
-    ).transform_calculate(
-        percentage='datum.count/datum.total'
-    ).properties(
+    )
+    
+    # Create a text layer to show total counts at the end of each bar
+    
+    # Combine the two charts
+    chart = (bar_chart).properties(
         # Set appropriate height based on number of brands
-        height=max(100, len(sorted_races) * 30),
-        width=600
+        height=max(400, len(brand_sort_order) * 30)
     )
     
     st.altair_chart(chart, use_container_width=True)
-    st.caption("As barras horizontais representam a distribuição de raça/etnia para cada marca. Todos os rótulos das marcas são visíveis.")
+    st.caption("As barras mostram a contagem de tênis por gênero para cada marca. Marcas com menos de " + 
+              f"{min_percentage_for_display}% do total foram agrupadas como 'Outros'.")
+    
+def render_race_by_brand(race_brand_data: pd.DataFrame, min_percentage_for_display=2.0):
+    """
+    Renders a horizontal stacked barplot showing the race breakdown for each brand.
+    
+    Args:
+        race_brand_data (pd.DataFrame): DataFrame where index is 'shoe_brand',
+                                          columns are race categories,
+                                          and values are absolute counts.
+        min_percentage_for_display (float): Minimum percentage a brand must have to be displayed individually.
+                                            Brands below this threshold will be grouped as 'Outros'.
+    """
+    st.subheader("🏃‍♂️ Contagem de Tênis por Marca e Raça")
+
+    if race_brand_data is None or race_brand_data.empty:
+        st.caption("Não há dados de raça e marca para exibir.")
+        return
+
+    # Make a copy to avoid modifying the original DataFrame
+    data = race_brand_data.copy()
+    data = data.T
+    
+    # Ensure index is named
+    if data.index.name is None:
+        data.index.name = "shoe_brand"
+    brand_col_name = data.index.name
+
+    # Calculate total counts for each brand
+    data['total'] = data.sum(axis=1)
+    total_shoes = data['total'].sum()
+    
+    # Calculate percentage for each brand
+    data['percentage'] = (data['total'] / total_shoes) * 100
+    
+    # Identify brands to be included in 'Outros'
+    small_brands = data[data['percentage'] < min_percentage_for_display].index
+    
+    # If we have small brands, group them into 'Outros'
+    if len(small_brands) > 0:
+        # Create a new row 'Outros' with the sum of all small brands
+        others_row = data.loc[small_brands].sum()
+        
+        # Remove small brands from the original DataFrame
+        data = data.drop(small_brands)
+        
+        # Add the 'Outros' row
+        data.loc['Outros'] = others_row
+    
+    # Sort by total count (descending)
+    
+    # Remove helper columns before converting to long format
+    data = data.drop(['total', 'percentage'], axis=1)
+    
+    # Melt the DataFrame to long format for Altair
+    df_long = data.reset_index().melt(
+        id_vars=brand_col_name,
+        var_name="race",
+        value_name="count"
+    )
+    
+    if df_long.empty or df_long['count'].sum() == 0:
+        st.caption("Não há dados processados de gênero e marca para exibir.")
+        return
+    
+    # Calculate percentage within each brand for stacked bars
+    df_long_percent = df_long.copy()
+    # Add total count per brand for calculations
+    brand_totals = df_long.groupby(brand_col_name)['count'].sum().reset_index()
+    brand_totals.columns = [brand_col_name, 'brand_total']
+    
+    # Merge to get the brand totals
+    df_long_percent = pd.merge(df_long_percent, brand_totals, on=brand_col_name)
+    # Calculate percentage within brand
+    df_long_percent['percentage'] = df_long_percent['count'] / df_long_percent['brand_total']
+    
+    # Get sorted brand order based on totals
+    brand_sort_order = brand_totals.sort_values('brand_total', ascending=False)[brand_col_name].tolist()
+    
+    # Create a horizontal stacked bar chart for gender distribution
+    bar_chart = alt.Chart(df_long_percent).mark_bar().encode(
+        # Y-axis: brands ordered by total count
+        y=alt.Y(f'{brand_col_name}:N', 
+                title='Marca',
+                sort=brand_sort_order,
+                axis=alt.Axis(labelLimit=200)),  # Ensure brand labels are visible
+        
+        # X-axis: percentage of counts stacked
+        x=alt.X('percentage:Q',
+                axis=alt.Axis(format='%'),
+                title='Contagem',
+                stack=True),# Stack the values
+        
+        # Color by gender
+        color=alt.Color('race:N', 
+                        title='Raça'),
+
+        
+        # Order of stacking (consistent across brands)
+        order=alt.Order('race:N', sort='descending'),
+        
+        # Tooltips for interactive exploration
+        tooltip=[
+            alt.Tooltip(f'{brand_col_name}:N', title='Marca'),
+            alt.Tooltip('race:N', title='Raça'),
+            alt.Tooltip('percentage:Q', title='Percentual na Marca', format='.1%')
+        ]
+    )
+    
+    # Create a text layer to show total counts at the end of each bar
+    
+    # Combine the two charts
+    chart = (bar_chart).properties(
+        # Set appropriate height based on number of brands
+        height=max(400, len(brand_sort_order) * 30)
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("As barras mostram a contagem de tênis por raça para cada marca. Marcas com menos de " + 
+              f"{min_percentage_for_display}% do total foram agrupadas como 'Outros'.")
