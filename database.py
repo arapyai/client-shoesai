@@ -55,6 +55,7 @@ def create_tables():
         brand_counts_json TEXT, -- JSON string of brand counts
         gender_distribution_json TEXT, -- JSON string of gender breakdown by brand
         race_distribution_json TEXT, -- JSON string of race breakdown by brand
+        category_distribution_json TEXT, -- JSON string of category breakdown by brand
         top_brands_json TEXT, -- JSON string of top brands table data
         last_calculated DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (marathon_id) REFERENCES Marathons(marathon_id) ON DELETE CASCADE
@@ -383,8 +384,8 @@ def calculate_and_store_marathon_metrics(marathon_id: int) -> None:
                 INSERT OR REPLACE INTO MarathonMetrics 
                 (marathon_id, total_images, total_shoes_detected, total_persons_with_demographics,
                  unique_brands_count, leader_brand_name, leader_brand_count, leader_brand_percentage,
-                 brand_counts_json, gender_distribution_json, race_distribution_json, top_brands_json)
-                VALUES (?, 0, 0, 0, 0, 'N/A', 0, 0.0, '{}', '{}', '{}', '[]')
+                 brand_counts_json, gender_distribution_json, race_distribution_json, category_distribution_json, top_brands_json)
+                VALUES (?, 0, 0, 0, 0, 'N/A', 0, 0.0, '{}', '{}', '{}', '{}', '[]')
             """, (marathon_id,))
             conn.commit()
             return
@@ -417,6 +418,10 @@ def calculate_and_store_marathon_metrics(marathon_id: int) -> None:
         if not metrics["race_brand_distribution"].empty:
             race_dist_json = metrics["race_brand_distribution"].to_json()
         
+        category_dist_json = "{}"
+        if not metrics["brand_counts_by_category"].empty:
+            category_dist_json = metrics["brand_counts_by_category"].to_json()
+        
         top_brands_json = "[]"
         if not metrics["top_brands_all_selected"].empty:
             top_brands_json = metrics["top_brands_all_selected"].to_json(orient='records')
@@ -426,11 +431,11 @@ def calculate_and_store_marathon_metrics(marathon_id: int) -> None:
             INSERT OR REPLACE INTO MarathonMetrics 
             (marathon_id, total_images, total_shoes_detected, total_persons_with_demographics,
              unique_brands_count, leader_brand_name, leader_brand_count, leader_brand_percentage,
-             brand_counts_json, gender_distribution_json, race_distribution_json, top_brands_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             brand_counts_json, gender_distribution_json, race_distribution_json, category_distribution_json, top_brands_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (marathon_id, total_images, total_shoes, total_persons, unique_brands,
               leader_name, leader_count, leader_percentage,
-              brand_counts_json, gender_dist_json, race_dist_json, top_brands_json))
+              brand_counts_json, gender_dist_json, race_dist_json, category_dist_json, top_brands_json))
         
         conn.commit()
         print(f"✅ Calculated and stored metrics for marathon {marathon_id}")
@@ -486,6 +491,7 @@ def get_precomputed_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Any]:
         combined_brand_counts = pd.Series(dtype='int64')
         combined_gender_dist = pd.DataFrame()
         combined_race_dist = pd.DataFrame()
+        combined_category_dist = pd.DataFrame()
         marathon_specific_data = {}
         
         for row in metrics_rows:
@@ -518,6 +524,14 @@ def get_precomputed_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Any]:
                     combined_race_dist = race_dist
                 else:
                     combined_race_dist = combined_race_dist.add(race_dist, fill_value=0)
+            
+            # Combine category distribution
+            if row['category_distribution_json'] and row['category_distribution_json'] != '{}':
+                category_dist = pd.read_json(row['category_distribution_json'])
+                if combined_category_dist.empty:
+                    combined_category_dist = category_dist
+                else:
+                    combined_category_dist = combined_category_dist.add(category_dist, fill_value=0)
         
         # Calculate leader brand from combined data
         leader_name = "N/A"
@@ -565,6 +579,7 @@ def get_precomputed_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Any]:
             "gender_brand_distribution": combined_gender_dist,
             "race_brand_distribution": combined_race_dist,
             "brand_counts_by_marathon": pd.DataFrame(),  # Not pre-computed for now
+            "brand_counts_by_category": combined_category_dist,
             "total_persons_by_marathon": pd.Series(dtype='int'),
             "marathon_specific_data_for_cards": marathon_specific_data,
         }
@@ -636,6 +651,10 @@ def get_individual_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Dict[s
             if row['race_distribution_json'] and row['race_distribution_json'] != '{}':
                 race_dist = pd.read_json(row['race_distribution_json'])
             
+            category_dist = pd.DataFrame()
+            if row['category_distribution_json'] and row['category_distribution_json'] != '{}':
+                category_dist = pd.read_json(row['category_distribution_json'])
+            
             # Create top brands table for this marathon
             top_brands_df = pd.DataFrame()
             if not brand_counts.empty:
@@ -671,6 +690,7 @@ def get_individual_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Dict[s
                 },
                 "gender_brand_distribution": gender_dist,
                 "race_brand_distribution": race_dist,
+                "brand_counts_by_category": category_dist,
                 "brand_counts_by_marathon": pd.DataFrame(),  # Not needed for individual
                 "total_persons_by_marathon": pd.Series(dtype='int'),
                 "marathon_specific_data_for_cards": {

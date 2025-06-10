@@ -159,8 +159,12 @@ def render_multiple_marathons_view(selected_marathons: list):
     if len(selected_marathons) > 1:
         viz_mode = st.radio(
             "Modo de Visualização:",
-            options=["columns", "timeline"],
-            format_func=lambda x: "📊 Lado a Lado" if x == "columns" else "📈 Evolução Temporal",
+            options=["columns", "timeline", "categories"],
+            format_func=lambda x: {
+                "columns": "📊 Lado a Lado", 
+                "timeline": "📈 Evolução Temporal",
+                "categories": "📏 Análise por Categoria"
+            }[x],
             horizontal=True,
             key="marathon_viz_mode"
         )
@@ -170,9 +174,12 @@ def render_multiple_marathons_view(selected_marathons: list):
     if viz_mode == "columns":
         st.caption("Visualize os dados específicos de cada prova selecionada lado a lado")
         render_columns_view(selected_marathons)
-    else:
+    elif viz_mode == "timeline":
         st.caption("Visualize a evolução das marcas ao longo do tempo nas provas selecionadas")
         render_timeline_view(selected_marathons)
+    else:  # categories
+        st.caption("Visualize a comparação das marcas por categoria nas provas selecionadas")
+        render_category_view(selected_marathons)
 
 def render_columns_view(selected_marathons: list):
     """
@@ -279,6 +286,94 @@ def prepare_timeline_data(individual_data: dict, selected_marathons: list) -> pd
     timeline_df = timeline_df.sort_values('event_date')
     
     return timeline_df
+
+def render_category_view(selected_marathons: list):
+    """
+    Render marathons in a category view with charts showing brand distribution across categories.
+    """
+    from ui_components import render_category_comparison_chart, render_category_timeline_chart
+    
+    # Get all marathon data
+    individual_data = preprocess_individual_marathons(selected_marathons)
+    
+    if not individual_data:
+        st.warning("Nenhum dado disponível para as provas selecionadas.")
+        return
+    
+    # Prepare category data by combining all marathon data
+    combined_category_data = pd.DataFrame()
+    timeline_records = []
+    
+    # Get marathon metadata for dates (needed for timeline)
+    marathon_metadata = st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
+    
+    for marathon_name in selected_marathons:
+        if marathon_name not in individual_data:
+            continue
+            
+        marathon_data = individual_data[marathon_name]
+        
+        # Get event date for this marathon
+        marathon_meta = next((m for m in marathon_metadata if m['name'] == marathon_name), None)
+        event_date = marathon_meta.get('event_date') if marathon_meta else None
+        
+        # Get category data for this marathon
+        category_data = marathon_data.get("brand_counts_by_category", pd.DataFrame())
+        
+        if not category_data.empty:
+            # Combine category data
+            if combined_category_data.empty:
+                combined_category_data = category_data.copy()
+            else:
+                combined_category_data = combined_category_data.add(category_data, fill_value=0)
+            
+            # Prepare timeline data for categories if we have a date
+            if event_date:
+                try:
+                    event_date_parsed = pd.to_datetime(event_date)
+                    
+                    for category_name, counts in category_data.iterrows():
+                        if counts.sum() == 0:
+                            continue
+                            
+                        # Calculate percentages
+                        total_shoes = counts.sum()
+                        
+                        for brand, count in counts.items():
+                            if count > 0:
+                                percentage = (count / total_shoes) * 100
+                                
+                                timeline_records.append({
+                                    'marathon_name': marathon_name,
+                                    'event_date': event_date_parsed,
+                                    'category': category_name,
+                                    'brand': brand,
+                                    'count': count,
+                                    'percentage': percentage
+                                })
+                except:
+                    # Skip if date parsing fails
+                    pass
+    
+    # Display category comparison charts
+    if not combined_category_data.empty:
+        render_category_comparison_chart(
+            combined_category_data,
+            highlight=["Olympikus", "Mizuno"]  # Default highlights
+        )
+    else:
+        st.warning("Não há dados de categoria disponíveis para as provas selecionadas.")
+        return
+    
+    # Display timeline view for categories if we have timeline data
+    if timeline_records:
+        st.markdown("---")
+        timeline_df = pd.DataFrame(timeline_records)
+        
+        if not timeline_df.empty:
+            render_category_timeline_chart(timeline_df)
+    else:
+        st.info("💡 **Dica:** Adicione datas às provas para ver a evolução temporal das categorias.")
 
 # --- Main Report Page UI ---
 def report_page_db():

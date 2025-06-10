@@ -533,6 +533,15 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: Dict[st
         with st.expander("🌍 Análise por Raça"):
             render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
     
+    # Category analysis (for single marathon showing different categories within it)
+    has_category_data = not marathon_data.get("brand_counts_by_category", pd.DataFrame()).empty
+    if has_category_data:
+        with st.expander("📏 Análise por Categoria"):
+            render_category_comparison_chart(
+                marathon_data["brand_counts_by_category"], 
+                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"])
+            )
+    
     # Top brands table
     with st.expander("🏆 Top Marcas"):
         render_top_brands_table(marathon_data["top_brands_all_selected"])
@@ -674,7 +683,7 @@ def render_brand_timeline_chart(timeline_data: pd.DataFrame) -> None:
     Args:
         timeline_data: DataFrame with columns: marathon_name, event_date, brand, percentage
     """
-    st.subheader("📈 Evolução das Marcas ao Longo do Tempo")
+    st.subheader("📈 Evolução da Participação das Marcas ao Longo do Tempo")
     
     if timeline_data.empty:
         st.warning("Não há dados temporais disponíveis para visualização.")
@@ -792,4 +801,199 @@ def render_timeline_insights(timeline_data: pd.DataFrame, top_brands: list) -> N
     st.caption(f"""
     📊 **Cobertura dos Dados:** {total_marathons} provas analisadas 
     de {date_range['min'].strftime('%b/%Y')} até {date_range['max'].strftime('%b/%Y')}
+    """)
+
+def render_category_comparison_chart(brand_counts_by_category, highlight=None):
+    """
+    Renders comparison charts for brand distribution across categories (5km, 10km, 21km, etc.).
+    
+    Args:
+        brand_counts_by_category: DataFrame where index is category and columns are brands
+        highlight: List of brand names to highlight with a different color
+    """
+    st.subheader("🏃‍♂️ Marcas por Categoria (Comparativo)")
+    
+    if brand_counts_by_category.empty:
+        st.caption("Não há dados de marcas por categoria para este gráfico.")
+        return
+    
+    for category_name, counts in brand_counts_by_category.iterrows():
+        if counts.sum() == 0:
+            st.caption(f"Não há dados de marcas para a categoria '{category_name}'.")
+            continue
+            
+        # Prepare data for the chart
+        category_data = pd.DataFrame({
+            'Marca': counts.index,
+            'Contagem': counts.values,
+            'Percentual': (counts / counts.sum() * 100).round(1)
+        })
+        
+        # Filter out zero counts and sort
+        category_data = category_data[category_data['Contagem'] > 0].sort_values('Contagem', ascending=False)
+        
+        if category_data.empty:
+            st.caption(f"Não há marcas detectadas para a categoria '{category_name}'.")
+            continue
+        
+        # Create highlight condition
+        highlight_condition = None
+        if highlight and isinstance(highlight, list):
+            highlight_brands_str = ', '.join([f'"{brand}"' for brand in highlight])
+            highlight_condition = f"indexof([{highlight_brands_str}], datum.Marca) >= 0"
+        
+        # Use the reusable chart builder
+        chart = create_bar_chart(
+            data=category_data,
+            x_col='Percentual',
+            y_col='Marca',
+            title=f"Categoria: {category_name}",
+            highlight_condition=highlight_condition
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
+        
+        # Add separator between categories (except for the last one)
+        if category_name != brand_counts_by_category.index[-1]:
+            st.markdown("---")
+
+def render_category_timeline_chart(timeline_data: pd.DataFrame) -> None:
+    """
+    Render a line chart showing brand percentage evolution across different categories.
+    
+    Args:
+        timeline_data: DataFrame with columns: marathon_name, event_date, category, brand, percentage
+    """
+    st.subheader("📈 Evolução das Marcas por Categoria")
+    
+    if timeline_data.empty:
+        st.warning("Não há dados temporais disponíveis para visualização por categoria.")
+        return
+    
+    # Check if we have multiple categories
+    categories = timeline_data['category'].unique()
+    if len(categories) < 2:
+        st.warning("São necessárias pelo menos 2 categorias para gerar o gráfico temporal.")
+        return
+    
+    # Get top brands to focus on (top 8 to avoid clutter)
+    top_brands = timeline_data.groupby('brand')['percentage'].mean().sort_values(ascending=False).head(8).index.tolist()
+    
+    # Filter data to top brands only
+    filtered_data = timeline_data[timeline_data['brand'].isin(top_brands)].copy()
+    
+    if filtered_data.empty:
+        st.warning("Não há dados suficientes para gerar o gráfico temporal por categoria.")
+        return
+    
+    # Create color palette for brands
+    color_scale = alt.Scale(scheme='category20')
+    
+    # Create the line chart with points
+    chart = alt.Chart(filtered_data).mark_line(
+        point=True,
+        strokeWidth=3
+    ).encode(
+        x=alt.X('category:N', 
+                title='Categoria',
+                sort=categories.tolist()),
+        y=alt.Y('percentage:Q', 
+                title='Participação (%)',
+                scale=alt.Scale(domain=[0, filtered_data['percentage'].max() * 1.1])),
+        color=alt.Color('brand:N', 
+                       title='Marca',
+                       scale=color_scale),
+        tooltip=[
+            alt.Tooltip('marathon_name:N', title='Prova'),
+            alt.Tooltip('category:N', title='Categoria'),
+            alt.Tooltip('brand:N', title='Marca'),
+            alt.Tooltip('percentage:Q', title='Participação (%)', format='.1f'),
+            alt.Tooltip('count:Q', title='Contagem')
+        ]
+    ).properties(
+        height=400,
+        title=alt.TitleParams(
+            text="Evolução da Participação das Marcas por Categoria",
+            anchor='start'
+        )
+    ).resolve_scale(
+        color='independent'
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
+    
+    # Add summary insights
+    st.markdown("---")
+    render_category_timeline_insights(filtered_data, top_brands, categories.tolist())
+
+def render_category_timeline_insights(timeline_data: pd.DataFrame, top_brands: list, categories: list) -> None:
+    """
+    Render insights about brand evolution across categories.
+    
+    Args:
+        timeline_data: DataFrame with timeline data
+        top_brands: List of top brand names
+        categories: List of categories
+    """
+    st.subheader("💡 Insights da Evolução por Categoria")
+    
+    if timeline_data.empty or len(categories) < 2:
+        st.info("São necessárias pelo menos 2 categorias para gerar insights.")
+        return
+    
+    insights = []
+    
+    # Calculate trends for each brand across categories
+    for brand in top_brands:
+        brand_data = timeline_data[timeline_data['brand'] == brand].copy()
+        
+        if len(brand_data) < 2:
+            continue
+        
+        # Sort by category (assuming categories are in order like 5km, 10km, 21km)
+        brand_data = brand_data.sort_values('category')
+        
+        # Calculate trend (compare shortest to longest distance if possible)
+        if len(brand_data) >= 2:
+            first_percentage = brand_data.iloc[0]['percentage']
+            last_percentage = brand_data.iloc[-1]['percentage']
+            change = last_percentage - first_percentage
+            
+            if abs(change) > 2:  # Only show significant changes
+                trend = "crescimento" if change > 0 else "queda"
+                first_category = brand_data.iloc[0]['category']
+                last_category = brand_data.iloc[-1]['category']
+                
+                insights.append({
+                    'brand': brand,
+                    'trend': trend,
+                    'change': abs(change),
+                    'direction': '📈' if change > 0 else '📉',
+                    'first_category': first_category,
+                    'last_category': last_category
+                })
+    
+    if insights:
+        # Sort by magnitude of change
+        insights.sort(key=lambda x: x['change'], reverse=True)
+        
+        # Display top insights
+        for i, insight in enumerate(insights[:3]):  # Show top 3 insights
+            if i == 0:
+                st.markdown(f"""
+                **{insight['direction']} Destaque Principal:** A marca **{insight['brand']}** apresentou {insight['trend']} 
+                de **{insight['change']:.1f} pontos percentuais** da categoria {insight['first_category']} para {insight['last_category']}.
+                """)
+            else:
+                st.markdown(f"""
+                • **{insight['brand']}**: {insight['trend']} de {insight['change']:.1f}pp ({insight['first_category']} → {insight['last_category']}) {insight['direction']}
+                """)
+    else:
+        st.info("As marcas mantiveram participações relativamente estáveis entre as categorias.")
+    
+    # Show data coverage info
+    total_marathons = len(timeline_data['marathon_name'].unique())
+    
+    st.caption(f"""
+    📊 **Cobertura dos Dados:** {len(categories)} categorias analisadas em {total_marathons} provas: {', '.join(categories)}
     """)

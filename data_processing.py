@@ -24,6 +24,7 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
         "gender_brand_distribution": pd.DataFrame(),
         "race_brand_distribution": pd.DataFrame(),
         "brand_counts_by_marathon": pd.DataFrame(),
+        "brand_counts_by_category": pd.DataFrame(),
         "total_persons_by_marathon": pd.Series(dtype='int'),
         "marathon_specific_data_for_cards": {} # New: for card info
     }
@@ -114,9 +115,18 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
         if not df_race_known.empty:
             race_brand_dist = df_race_known.groupby(['person_race', 'shoe_brand']).size().unstack(fill_value=0)
     
+    # Category-by-brand distribution for category comparison charts
+    brand_counts_by_category = pd.DataFrame()
+    if not df_shoes_only.empty and 'category' in df_shoes_only.columns and 'shoe_brand' in df_shoes_only.columns:
+        # Filter out rows where category is null
+        df_with_category = df_shoes_only.dropna(subset=['category'])
+        if not df_with_category.empty:
+            brand_counts_by_category = df_with_category.groupby('category')['shoe_brand'].value_counts().unstack(fill_value=0)
+    
+    # Marathon-by-brand distribution for marathon comparison charts
     brand_counts_by_marathon = pd.DataFrame()
     if not df_shoes_only.empty and 'marathon_name' in df_shoes_only.columns and 'shoe_brand' in df_shoes_only.columns:
-        brand_counts_by_marathon = df_shoes_only.groupby('category')['shoe_brand'].value_counts().unstack(fill_value=0)
+        brand_counts_by_marathon = df_shoes_only.groupby('marathon_name')['shoe_brand'].value_counts().unstack(fill_value=0)
 
     return {
         "total_images_selected": total_images_selected,
@@ -133,6 +143,7 @@ def process_queried_data_for_report(df_flat_selected, df_raw_selected_reconstruc
         "gender_brand_distribution": gender_brand_dist,
         "race_brand_distribution": race_brand_dist,
         "brand_counts_by_marathon": brand_counts_by_marathon,
+        "brand_counts_by_category": brand_counts_by_category,
         "total_persons_by_marathon": total_persons_by_marathon,
         "marathon_specific_data_for_cards": marathon_specific_data_for_cards,
         "bulk_data" :  df_shoes_only,
