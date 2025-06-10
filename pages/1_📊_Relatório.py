@@ -46,10 +46,15 @@ if 'processed_report_data' not in st.session_state or \
    (st.session_state.selected_marathon_names_ui and not st.session_state.processed_report_data.get("total_images_selected", -1) > -1) : # -1 to force initial load
     
     initial_marathon_ids = [MARATHON_ID_MAP[name] for name in st.session_state.selected_marathon_names_ui if name in MARATHON_ID_MAP]
+    # Filter out None values
+    initial_marathon_ids = [mid for mid in initial_marathon_ids if mid is not None]
+    
     if initial_marathon_ids:
-        df_flat, df_raw_reconstructed = get_data_for_selected_marathons_db(initial_marathon_ids)
-        st.session_state.processed_report_data = process_queried_data_for_report(df_flat, df_raw_reconstructed)
+        # Use pre-computed metrics for initial load too
+        from database import get_precomputed_marathon_metrics
+        st.session_state.processed_report_data = get_precomputed_marathon_metrics(initial_marathon_ids)
     else: # No marathons selected or available yet
+        from data_processing import process_queried_data_for_report
         st.session_state.processed_report_data = process_queried_data_for_report(pd.DataFrame(), pd.DataFrame())
 
 if 'show_report_content_db' not in st.session_state:
@@ -63,25 +68,30 @@ if 'show_pdf_preview_db' not in st.session_state:
 def get_individual_marathon_data_cached(marathon_id: int) -> dict:
     """
     Cache individual marathon data to avoid reprocessing.
-    Returns processed data for a single marathon.
+    Returns processed data for a single marathon using pre-computed metrics.
     """
-    df_flat, df_raw = get_data_for_selected_marathons_db([marathon_id])
-    return process_queried_data_for_report(df_flat, df_raw)
+    from database import get_precomputed_marathon_metrics
+    return get_precomputed_marathon_metrics([marathon_id])
 
 def preprocess_individual_marathons(marathon_names: list) -> dict:
     """
-    Efficiently preprocess data for multiple marathons in batch.
+    Efficiently preprocess data for multiple marathons using pre-computed metrics.
     Returns a dict mapping marathon_name -> processed_data.
     """
-    # Get marathon IDs
-    marathon_ids = [MARATHON_ID_MAP.get(name) for name in marathon_names if MARATHON_ID_MAP.get(name)]
+    # Get marathon IDs and filter out None values
+    marathon_ids = [MARATHON_ID_MAP.get(name) for name in marathon_names if MARATHON_ID_MAP.get(name) is not None]
+    # Filter out any None values to ensure we have only int values
+    marathon_ids = [mid for mid in marathon_ids if mid is not None]
     
     if not marathon_ids:
         return {}
     
-    # Use batch processing for maximum efficiency
-    with st.spinner("Processando dados individuais das provas..."):
-        _, individual_data = process_multiple_marathons_efficiently(marathon_ids)
+    # Use the new efficient individual metrics function
+    with st.spinner("Carregando dados pré-calculados das provas..."):
+        from database import get_individual_marathon_metrics
+        
+        # Get all individual marathon metrics in a single database call
+        individual_data = get_individual_marathon_metrics(marathon_ids)
     
     return individual_data
 
@@ -190,9 +200,10 @@ def report_page_db():
             if st.session_state.selected_marathon_names_ui:
                 selected_ids = [MARATHON_ID_MAP[name] for name in st.session_state.selected_marathon_names_ui if name in MARATHON_ID_MAP]
                 if selected_ids:
-                    with st.spinner("Buscando e processando dados do banco..."):
-                        df_flat_from_db, df_raw_reconstructed_from_db = get_data_for_selected_marathons_db(selected_ids)
-                        st.session_state.processed_report_data = process_queried_data_for_report(df_flat_from_db, df_raw_reconstructed_from_db)
+                    with st.spinner("Buscando dados pré-calculados do banco..."):
+                        # Try to use pre-computed metrics first
+                        from database import get_precomputed_marathon_metrics
+                        st.session_state.processed_report_data = get_precomputed_marathon_metrics(selected_ids)
                         st.session_state.show_report_content_db = True
                     st.rerun() 
                 else:
