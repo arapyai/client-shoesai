@@ -698,6 +698,68 @@ def get_individual_marathon_metrics(marathon_ids: List[int]) -> Dict[str, Dict[s
         conn.close()
 
 
+def delete_marathon_by_id(marathon_id: int) -> bool:
+    """
+    Delete a marathon and all associated data (images, shoe detections, demographics, metrics).
+    
+    Args:
+        marathon_id: The ID of the marathon to delete
+        
+    Returns:
+        bool: True if deletion was successful, False otherwise
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Check if marathon exists
+        cursor.execute("SELECT name FROM Marathons WHERE marathon_id = ?", (marathon_id,))
+        marathon = cursor.fetchone()
+        
+        if not marathon:
+            print(f"❌ Marathon with ID {marathon_id} not found")
+            return False
+        
+        marathon_name = marathon['name']
+        print(f"🗑️ Deleting marathon '{marathon_name}' (ID: {marathon_id})...")
+        
+        # Delete in order due to foreign key constraints
+        # 1. Delete shoe detections
+        cursor.execute("""
+            DELETE FROM ShoeDetections 
+            WHERE image_id IN (
+                SELECT image_id FROM Images WHERE marathon_id = ?
+            )
+        """, (marathon_id,))
+        
+        # 2. Delete person demographics
+        cursor.execute("""
+            DELETE FROM PersonDemographics 
+            WHERE image_id IN (
+                SELECT image_id FROM Images WHERE marathon_id = ?
+            )
+        """, (marathon_id,))
+        
+        # 3. Delete images
+        cursor.execute("DELETE FROM Images WHERE marathon_id = ?", (marathon_id,))
+        
+        # 4. Delete marathon metrics
+        cursor.execute("DELETE FROM MarathonMetrics WHERE marathon_id = ?", (marathon_id,))
+        
+        # 5. Finally delete the marathon itself
+        cursor.execute("DELETE FROM Marathons WHERE marathon_id = ?", (marathon_id,))
+        
+        conn.commit()
+        print(f"✅ Successfully deleted marathon '{marathon_name}' and all associated data")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error deleting marathon {marathon_id}: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
 # Initialize database and tables
 if __name__ == "__main__":
     create_tables()

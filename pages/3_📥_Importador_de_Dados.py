@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 import pandas as pd
-from database import add_marathon_metadata, insert_parsed_json_data, get_db_connection # Ensure this path is correct
+from database import add_marathon_metadata, insert_parsed_json_data, get_db_connection, delete_marathon_by_id # Ensure this path is correct
 
 st.set_page_config(layout="wide", page_title="CourtShoes AI - Importador")
 
@@ -105,13 +105,96 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
                 st.error(traceback.format_exc())
                 progress_bar.empty()
 
-# Add a section to view existing marathons
-st.sidebar.markdown("---")
-st.sidebar.subheader("Provas Existentes")
+# --- Provas Existentes Section ---
+st.markdown("---")
+st.subheader("🗂️ Provas Existentes no Sistema")
+st.caption("Gerencie as provas já importadas no sistema")
+
+# Get existing marathons from database
 conn_view = get_db_connection()
-existing_marathons_df = pd.read_sql_query("SELECT marathon_id, name, event_date, location FROM Marathons ORDER BY upload_timestamp DESC", conn_view)
+existing_marathons_df = pd.read_sql_query("""
+    SELECT marathon_id, name, event_date, location, upload_timestamp 
+    FROM Marathons 
+    ORDER BY upload_timestamp DESC
+""", conn_view)
 conn_view.close()
+
 if not existing_marathons_df.empty:
-    st.sidebar.dataframe(existing_marathons_df, hide_index=True)
+    # Display marathons in an organized way with delete buttons
+    for index, marathon in existing_marathons_df.iterrows():
+        with st.container(border=True):
+            col_info, col_actions = st.columns([4, 1])
+            
+            with col_info:
+                st.write(f"**{marathon['name']}**")
+                
+                # Format the information in a nice way
+                details = []
+                if marathon['event_date']:
+                    details.append(f"🗓️ {marathon['event_date']}")
+                if marathon['location']:
+                    details.append(f"📍 {marathon['location']}")
+                if marathon['upload_timestamp']:
+                    upload_date = str(marathon['upload_timestamp']).split()[0]
+                    details.append(f"📥 Importado em: {upload_date}")
+                
+                if details:
+                    st.caption(" | ".join(details))
+            
+            with col_actions:
+                # Add delete button for each marathon
+                if st.button(
+                    "🗑️ Excluir", 
+                    key=f"delete_marathon_{marathon['marathon_id']}", 
+                    help="Excluir esta prova e todos os dados associados",
+                    type="secondary",
+                    use_container_width=True
+                ):
+                    # Show confirmation dialog
+                    if f"confirm_delete_{marathon['marathon_id']}" not in st.session_state:
+                        st.session_state[f"confirm_delete_{marathon['marathon_id']}"] = True
+                        st.rerun()
+            
+            # Handle deletion confirmation
+            if st.session_state.get(f"confirm_delete_{marathon['marathon_id']}", False):
+                st.warning(f"⚠️ Tem certeza que deseja excluir a prova **{marathon['name']}**? Esta ação não pode ser desfeita!")
+                
+                col_confirm, col_cancel = st.columns(2)
+                with col_confirm:
+                    if st.button(
+                        "✅ Sim, excluir", 
+                        key=f"confirm_yes_{marathon['marathon_id']}", 
+                        type="primary",
+                        use_container_width=True
+                    ):
+                        # Perform deletion
+                        if delete_marathon_by_id(marathon['marathon_id']):
+                            st.success(f"Prova '{marathon['name']}' foi excluída com sucesso!")
+                            
+                            # Clear session states to force reload
+                            for key_to_clear in ['df_all_marathons_raw', 'df_flat_detections', 'processed_report_data', 
+                                               'selected_marathon_names_ui', 'MARATHON_OPTIONS_DB_CACHED']:
+                                if key_to_clear in st.session_state:
+                                    del st.session_state[key_to_clear]
+                            st.cache_data.clear()
+                            
+                            # Clear confirmation state
+                            if f"confirm_delete_{marathon['marathon_id']}" in st.session_state:
+                                del st.session_state[f"confirm_delete_{marathon['marathon_id']}"]
+                            
+                            st.rerun()
+                        else:
+                            st.error("Erro ao excluir a prova. Tente novamente.")
+                
+                with col_cancel:
+                    if st.button(
+                        "❌ Cancelar", 
+                        key=f"confirm_no_{marathon['marathon_id']}",
+                        use_container_width=True
+                    ):
+                        # Cancel deletion
+                        if f"confirm_delete_{marathon['marathon_id']}" in st.session_state:
+                            del st.session_state[f"confirm_delete_{marathon['marathon_id']}"]
+                        st.rerun()
 else:
-    st.sidebar.caption("Nenhuma prova importada ainda.")
+    st.info("📋 Nenhuma prova importada ainda. Use o formulário acima para importar sua primeira prova!")

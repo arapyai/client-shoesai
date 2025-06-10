@@ -55,8 +55,18 @@ def create_bar_chart(
         if highlight_condition else alt.value(default_color)
     )
     
+    #Check max value for x_col to set appropriate scale
+    if data[x_col].max() < 50:
+        x_scale = alt.Scale(domain=[0, 50])
+    elif data[x_col].max() < 75:
+        x_scale = alt.Scale(domain=[0, 75])
+    elif data[x_col].max() < 100:
+        x_scale = alt.Scale(domain=[0, 100])
+    else:
+        x_scale = alt.Scale(domain=[0, data[x_col].max() * 1.1])
+
     chart = alt.Chart(data).mark_bar().encode(
-        x=alt.X(f'{x_col}:Q', title=x_col.replace('_', ' ').title()),
+        x=alt.X(f'{x_col}:Q', title=x_col.replace('_', ' ').title(), scale=x_scale),
         y=alt.Y(f'{y_col}:N', title=y_col.replace('_', ' ').title(), sort='-x'),
         color=color_condition,
         tooltip=[
