@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 import pandas as pd
-from database_abstraction import add_marathon_metadata, insert_parsed_json_data, get_db_connection, delete_marathon_by_id # Ensure this path is correct
+from database_abstraction import db
 
 st.set_page_config(layout="wide", page_title="Shoes AI - Importador")
 
@@ -69,7 +69,7 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
                 image_data_list_for_db = df_temp.to_dict(orient='records')
                 
                 progress_bar.progress(10, text="Metadados da prova sendo salvos...")
-                marathon_id = add_marathon_metadata(
+                marathon_id = db.add_marathon_metadata(
                     name=marathon_name,
                     event_date=str(event_date_input) if event_date_input else None,
                     location=location,
@@ -81,7 +81,7 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
 
                 if marathon_id:
                     progress_bar.progress(30, text=f"Metadados salvos (ID: {marathon_id}). Processando imagens...")
-                    insert_parsed_json_data(marathon_id, image_data_list_for_db) # This function now handles batching internally
+                    db.insert_parsed_json_data(marathon_id, image_data_list_for_db) # This function now handles batching internally
                     progress_bar.progress(100, text="Importação concluída!")
                     st.success(f"Prova '{marathon_name}' e seus dados importados com sucesso! ID da Prova: {marathon_id}")
                     
@@ -174,7 +174,7 @@ if not existing_marathons_df.empty:
                         use_container_width=True
                     ):
                         # Perform deletion
-                        if delete_marathon_by_id(marathon['marathon_id']):
+                        if db.delete_marathon_by_id(marathon['marathon_id']):
                             st.success(f"Prova '{marathon['name']}' foi excluída com sucesso!")
                             
                             # Clear session states to force reload

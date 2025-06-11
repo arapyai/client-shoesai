@@ -319,6 +319,333 @@ class DatabaseManager:
             return False
 
     # Marathon Management Methods
+    def add_marathon_metadata(self, name: str, event_date: Optional[str], location: Optional[str], 
+                            distance_km: Optional[float], description: Optional[str], 
+                            original_json_filename: Optional[str], user_id: int) -> Optional[int]:
+        """Add marathon metadata to the database."""
+        try:
+            with self.get_connection() as conn:
+                stmt = insert(self.marathons).values(
+                    name=name,
+                    event_date=event_date,
+                    location=location,
+                    distance_km=distance_km,
+                    description=description,
+                    original_json_filename=original_json_filename,
+                    uploaded_by_user_id=user_id,
+                    upload_timestamp=datetime.now()
+                )
+                result = conn.execute(stmt)
+                marathon_id = result.inserted_primary_key[0]
+                conn.commit()
+                logger.info(f"Successfully added marathon '{name}' with ID {marathon_id}")
+                return marathon_id
+        except IntegrityError:
+            logger.error(f"Marathon with name '{name}' already exists")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to add marathon metadata: {e}")
+            return None
+
+    def insert_parsed_json_data(self, marathon_id: int, parsed_json_data_list: List[Dict]) -> bool:
+        """
+        Insert data parsed from a JSON file (list of image records) into the database.
+        Handles duplicate filenames by inserting the image once and linking detections.
+        """
+        if not parsed_json_data_list:
+            logger.warning("No data provided for insertion")
+            return True
+            
+        try:
+            with self.get_connection() as conn:
+                trans = conn.begin()
+                try:
+                    image_id_cache = {}  # To store image_id for (marathon_id, filename)
+                    
+                    for image_record_dict in parsed_json_data_list:
+                        img_category = image_record_dict.get('folder')  # trocar por label depois
+                        img_filename = image_record_dict.get('filename')
+                        if not img_filename:
+                            logger.warning("Skipping record with no filename")
+                            continue
+                        
+                        image_key = (marathon_id, img_filename)
+                        current_image_id = None
+                        
+                        if image_key in image_id_cache:
+                            current_image_id = image_id_cache[image_key]
+                        else:
+                            try:
+                                # Insert image
+                                stmt = insert(self.images).values(
+                                    marathon_id=marathon_id,
+                                    filename=img_filename,
+                                    original_width=image_record_dict.get('original_width'),
+                                    original_height=image_record_dict.get('original_height'),
+                                    category=img_category
+                                )
+                                result = conn.execute(stmt)
+                                current_image_id = result.inserted_primary_key[0]
+                                image_id_cache[image_key] = current_image_id
+                            except IntegrityError:
+                                # Fetch existing image_id if insert failed due to unique constraint
+                                existing_image_stmt = select(self.images.c.image_id).where(
+                                    and_(self.images.c.marathon_id == marathon_id,
+                                         self.images.c.filename == img_filename)
+                                )
+                                existing_image = conn.execute(existing_image_stmt).fetchone()
+                                if existing_image:
+                                    current_image_id = existing_image.image_id
+                                    image_id_cache[image_key] = current_image_id
+                                else:
+                                    logger.error(f"Could not insert or find image for {img_filename} in marathon {marathon_id}")
+                                    continue
+                            except Exception as e_img:
+                                logger.error(f"Error inserting image {img_filename}: {e_img}")
+                                continue
+                        
+                        if current_image_id is None:
+                            continue
+                        
+                        # Insert Shoe Detections (can be multiple per image_id)
+                        shoes = image_record_dict.get('shoes', [])
+                        if isinstance(shoes, list):
+                            for shoe in shoes:
+                                if isinstance(shoe, dict):
+                                    # Safe extraction of shoe data with proper null checks
+                                    label_data = shoe.get('label')
+                                    brand = label_data[0] if isinstance(label_data, list) and len(label_data) > 0 else None
+                                    
+                                    prob_data = shoe.get('prob')
+                                    prob = prob_data[0] if isinstance(prob_data, list) and len(prob_data) > 0 else None
+                                    
+                                    bbox_data = shoe.get('bbox')
+                                    bbox_list = bbox_data[0] if isinstance(bbox_data, list) and len(bbox_data) > 0 else [None]*4
+                                    
+                                    confidence = shoe.get('confidence')
+                                    try:
+                                        stmt = insert(self.shoe_detections).values(
+                                            image_id=current_image_id,
+                                            brand=brand,
+                                            probability=prob,
+                                            confidence=confidence,
+                                            bbox_x1=bbox_list[0],
+                                            bbox_y1=bbox_list[1],
+                                            bbox_x2=bbox_list[2],
+                                            bbox_y2=bbox_list[3]
+                                        )
+                                        conn.execute(stmt)
+                                    except Exception as e_shoe:
+                                        logger.error(f"Error inserting shoe for image_id {current_image_id}: {e_shoe}")
+                                        # Continue with other shoes instead of breaking
+                        
+                        # Insert Person Demographics (only once per image_id due to UNIQUE constraint)
+                        demographic = image_record_dict.get('demographic')
+                        if isinstance(demographic, dict):
+                            gender_data = demographic.get('gender', {})
+                            age_data = demographic.get('age', {})
+                            race_data = demographic.get('race', {})
+                            person_bbox_list = demographic.get('bbox', [None]*4)
+                            
+                            try:
+                                stmt = insert(self.person_demographics).values(
+                                    image_id=current_image_id,
+                                    gender_label=gender_data.get('label'),
+                                    gender_prob=gender_data.get('prob'),
+                                    age_label=age_data.get('label'),
+                                    age_prob=age_data.get('prob'),
+                                    race_label=race_data.get('label'),
+                                    race_prob=race_data.get('prob'),
+                                    person_bbox_x1=person_bbox_list[0],
+                                    person_bbox_y1=person_bbox_list[1],
+                                    person_bbox_x2=person_bbox_list[2],
+                                    person_bbox_y2=person_bbox_list[3]
+                                )
+                                conn.execute(stmt)
+                            except IntegrityError:
+                                # This is expected if demographic data for this image_id was already inserted
+                                pass
+                            except Exception as e_demo:
+                                logger.error(f"Error inserting demographic for image_id {current_image_id}: {e_demo}")
+                    
+                    trans.commit()
+                    logger.info(f"Successfully inserted {len(parsed_json_data_list)} image records for marathon {marathon_id}")
+                    
+                    # Calculate and store pre-computed metrics after successful import
+                    logger.info(f"Calculating metrics for marathon {marathon_id}...")
+                    self.calculate_and_store_marathon_metrics(marathon_id)
+                    
+                    return True
+                    
+                except Exception as e:
+                    trans.rollback()
+                    logger.error(f"Error during JSON data insertion: {e}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Failed to insert parsed JSON data: {e}")
+            return False
+
+    def delete_marathon_by_id(self, marathon_id: int) -> bool:
+        """
+        Delete a marathon and all associated data (images, shoe detections, demographics, metrics).
+        """
+        try:
+            with self.get_connection() as conn:
+                trans = conn.begin()
+                try:
+                    # Check if marathon exists
+                    marathon_check = select(self.marathons.c.name).where(self.marathons.c.marathon_id == marathon_id)
+                    marathon = conn.execute(marathon_check).fetchone()
+                    
+                    if not marathon:
+                        logger.error(f"Marathon with ID {marathon_id} not found")
+                        return False
+                    
+                    marathon_name = marathon.name
+                    logger.info(f"Deleting marathon '{marathon_name}' (ID: {marathon_id})...")
+                    
+                    # Get all image IDs for this marathon
+                    image_ids_stmt = select(self.images.c.image_id).where(self.images.c.marathon_id == marathon_id)
+                    image_ids = [row.image_id for row in conn.execute(image_ids_stmt).fetchall()]
+                    
+                    if image_ids:
+                        # Delete shoe detections
+                        delete_shoes = delete(self.shoe_detections).where(self.shoe_detections.c.image_id.in_(image_ids))
+                        conn.execute(delete_shoes)
+                        
+                        # Delete person demographics
+                        delete_demographics = delete(self.person_demographics).where(self.person_demographics.c.image_id.in_(image_ids))
+                        conn.execute(delete_demographics)
+                    
+                    # Delete images
+                    delete_images = delete(self.images).where(self.images.c.marathon_id == marathon_id)
+                    conn.execute(delete_images)
+                    
+                    # Delete marathon metrics
+                    delete_metrics = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
+                    conn.execute(delete_metrics)
+                    
+                    # Finally delete the marathon itself
+                    delete_marathon = delete(self.marathons).where(self.marathons.c.marathon_id == marathon_id)
+                    conn.execute(delete_marathon)
+                    
+                    trans.commit()
+                    logger.info(f"Successfully deleted marathon '{marathon_name}' and all associated data")
+                    return True
+                    
+                except Exception as e:
+                    trans.rollback()
+                    logger.error(f"Error deleting marathon {marathon_id}: {e}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Failed to delete marathon: {e}")
+            return False
+
+    def calculate_and_store_marathon_metrics(self, marathon_id: int) -> None:
+        """
+        Calculate and store pre-computed metrics for a marathon.
+        This function should be called after importing marathon data.
+        """
+        try:
+            # Get all data for this marathon
+            df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
+            
+            if df_flat.empty and df_raw.empty:
+                # Store empty metrics
+                stmt = insert(self.marathon_metrics).values(
+                    marathon_id=marathon_id,
+                    total_images=0,
+                    total_shoes_detected=0,
+                    total_persons_with_demographics=0,
+                    unique_brands_count=0,
+                    leader_brand_name='N/A',
+                    leader_brand_count=0,
+                    leader_brand_percentage=0.0,
+                    brand_counts_json='{}',
+                    gender_distribution_json='{}',
+                    race_distribution_json='{}',
+                    category_distribution_json='{}',
+                    top_brands_json='[]'
+                )
+                # Use upsert operation (INSERT ... ON CONFLICT)
+                with self.get_connection() as conn:
+                    # First try to delete existing metrics
+                    delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
+                    conn.execute(delete_existing)
+                    # Then insert new metrics
+                    conn.execute(stmt)
+                    conn.commit()
+                return
+            
+            # Import the processing function
+            from data_processing import process_queried_data_for_report
+            
+            # Calculate metrics using existing function
+            metrics = process_queried_data_for_report(df_flat, df_raw)
+            
+            # Extract key metrics
+            total_images = metrics.get("total_images_selected", 0)
+            total_shoes = metrics.get("total_shoes_detected", 0)
+            total_persons = metrics.get("persons_analyzed_count", 0)
+            unique_brands = metrics.get("unique_brands_count", 0)
+            
+            leader_info = metrics.get("leader_brand_info", {})
+            leader_name = leader_info.get("name", "N/A")
+            leader_count = leader_info.get("count", 0)
+            leader_percentage = leader_info.get("percentage", 0.0)
+            
+            # Convert complex data to JSON strings
+            brand_counts_json = metrics["brand_counts_all_selected"].to_json() if not metrics["brand_counts_all_selected"].empty else "{}"
+            
+            gender_dist_json = "{}"
+            if not metrics["gender_brand_distribution"].empty:
+                gender_dist_json = metrics["gender_brand_distribution"].to_json()
+            
+            race_dist_json = "{}"
+            if not metrics["race_brand_distribution"].empty:
+                race_dist_json = metrics["race_brand_distribution"].to_json()
+            
+            category_dist_json = "{}"
+            if not metrics["brand_counts_by_category"].empty:
+                category_dist_json = metrics["brand_counts_by_category"].to_json()
+            
+            top_brands_json = "[]"
+            if not metrics["top_brands_all_selected"].empty:
+                top_brands_json = metrics["top_brands_all_selected"].to_json(orient='records')
+            
+            # Store calculated metrics
+            stmt = insert(self.marathon_metrics).values(
+                marathon_id=marathon_id,
+                total_images=total_images,
+                total_shoes_detected=total_shoes,
+                total_persons_with_demographics=total_persons,
+                unique_brands_count=unique_brands,
+                leader_brand_name=leader_name,
+                leader_brand_count=leader_count,
+                leader_brand_percentage=leader_percentage,
+                brand_counts_json=brand_counts_json,
+                gender_distribution_json=gender_dist_json,
+                race_distribution_json=race_dist_json,
+                category_distribution_json=category_dist_json,
+                top_brands_json=top_brands_json,
+                last_calculated=datetime.now()
+            )
+            
+            with self.get_connection() as conn:
+                # First try to delete existing metrics
+                delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
+                conn.execute(delete_existing)
+                # Then insert new metrics
+                conn.execute(stmt)
+                conn.commit()
+                
+            logger.info(f"Calculated and stored metrics for marathon {marathon_id}")
+            
+        except Exception as e:
+            logger.error(f"Error calculating metrics for marathon {marathon_id}: {e}")
+
     def get_marathon_list_from_db(self) -> List[Dict]:
         """Get list of all marathons from the database."""
         try:
@@ -697,3 +1024,24 @@ def get_individual_marathon_metrics(marathon_ids):
     if db is None:
         return {}
     return db.get_individual_marathon_metrics(marathon_ids)
+
+
+def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
+    """Backward compatibility function."""
+    if db is None:
+        return None
+    return db.add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id)
+
+
+def insert_parsed_json_data(marathon_id, parsed_json_data_list):
+    """Backward compatibility function."""
+    if db is None:
+        return False
+    return db.insert_parsed_json_data(marathon_id, parsed_json_data_list)
+
+
+def delete_marathon_by_id(marathon_id):
+    """Backward compatibility function."""
+    if db is None:
+        return False
+    return db.delete_marathon_by_id(marathon_id)
