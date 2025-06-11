@@ -354,192 +354,118 @@ class DatabaseManager:
             return None
 
     def insert_parsed_json_data(self, marathon_id: int, parsed_json_data_list: List[Dict]) -> bool:
-        """
-        Insert data parsed from a JSON file (list of image records) into the database.
-        Handles the JSON structure where each image can have multiple demographics and each person can have multiple shoes.
-        Processing order: images → demographics → shoes
-        """
+        """Insert data parsed from a JSON file."""
         if not parsed_json_data_list:
             logger.warning("No data provided for insertion")
             return True
-            
-        try:
-            with self.get_connection() as conn:
-                trans = conn.begin()
-                try:
-                    # Step 1: Insert all images first
-                    image_id_cache = {}  # To store image_id for (marathon_id, filename)
-                    #check images already in the database
-                    existing_images_stmt = select(
-                        self.images.c.image_id, 
-                        self.images.c.marathon_id, 
-                        self.images.c.filename
-                    ).where(self.images.c.marathon_id == marathon_id)
-                    existing_images = conn.execute(existing_images_stmt).fetchall()
-                    for row in existing_images:
-                        image_id_cache[(row.marathon_id, row.filename)] = row.image_id
-                    logger.info(f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache")
 
-                    demographics_to_insert = []  # Queue for demographics insertion
-                    shoes_to_insert = []  # Queue for shoes insertion
-                    
-                    logger.info(f"Step 1: Processing {len(parsed_json_data_list)} image records...")
-                    
-                    for image_record_dict in parsed_json_data_list:
-                        img_category = image_record_dict.get('folder')  # trocar por label depois
-                        img_filename = image_record_dict.get('filename')
-                        if not img_filename:
-                            logger.warning("Skipping record with no filename")
-                            continue
-                        
-                        image_key = (marathon_id, img_filename)
-                        current_image_id = None
-                        
-                        # Check if we already processed this image in our cache
-                        if image_key in image_id_cache:
-                            current_image_id = image_id_cache[image_key]
-                            logger.debug(f"Using cached image ID {current_image_id} for {img_filename}")
-                        else:
-                            # Insert the image and get its ID
-                            stmt = insert(self.images).values(
+        try:
+            with self.engine.begin() as conn:
+                image_id_cache = {}
+                existing_stmt = select(self.images.c.image_id, self.images.c.filename).where(
+                    self.images.c.marathon_id == marathon_id
+                )
+                for row in conn.execute(existing_stmt):
+                    image_id_cache[row.filename] = row.image_id
+                logger.info(
+                    f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache"
+                )
+
+                demographics_records = []
+                shoes_records = []
+
+                for record in parsed_json_data_list:
+                    filename = record.get("filename")
+                    if not filename:
+                        logger.warning("Skipping record with no filename")
+                        continue
+
+                    if filename in image_id_cache:
+                        image_id = image_id_cache[filename]
+                    else:
+                        result = conn.execute(
+                            insert(self.images).values(
                                 marathon_id=marathon_id,
-                                filename=img_filename,
-                                original_width=image_record_dict.get('original_width'),
-                                original_height=image_record_dict.get('original_height'),
-                                category=img_category
+                                filename=filename,
+                                original_width=record.get("original_width"),
+                                original_height=record.get("original_height"),
+                                category=record.get("folder"),
                             )
-                            
-                            result = conn.execute(stmt)
-                            current_image_id = result.inserted_primary_key[0]
-                            image_id_cache[image_key] = current_image_id  # Cache the new image ID
-                                
-                            
-                        # Collect demographics for later insertion
-                        demographics = image_record_dict.get('demographic', {})
-                        if demographics:
-                            demographics_to_insert.append({
-                                'image_id': current_image_id,
-                                'demographic_data': demographics
-                            })
-                            
-                        shoes = image_record_dict.get('shoes', [])
-                        if isinstance(shoes, list):
-                            for shoe in shoes:
-                                if isinstance(shoe, dict):
-                                    shoes_to_insert.append({
-                                        'image_id': current_image_id,
-                                        'shoe_data': shoe
-                                    })
-                    
-                    # Step 2: Insert all demographics
-                    logger.info(f"Step 2: Inserting {len(demographics_to_insert)} demographic records...")
-                    inserted_demographic_ids = []
-                    
-                    for demo_item in demographics_to_insert:
-                        demographic_id = self._insert_demographic_record(conn, demo_item)
-                        if demographic_id:
-                            inserted_demographic_ids.append(demographic_id)
-                    
-                    # Step 3: Insert all shoes
-                    logger.info(f"Step 3: Inserting {len(shoes_to_insert)} shoe detection records...")
-                    inserted_shoe_count = 0
-                    
-                    for shoe_item in shoes_to_insert:
-                        if self._insert_shoe_detection(conn, shoe_item):
-                            inserted_shoe_count += 1
-                    
-                    trans.commit()
-                    logger.info(f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images, {len(inserted_demographic_ids)} demographics, {inserted_shoe_count} shoes")
-                    
-                    # Calculate and store pre-computed metrics after successful import
-                    logger.info(f"Calculating metrics for marathon {marathon_id}...")
-                    self.calculate_and_store_marathon_metrics(marathon_id)
-                    
-                    return True
-                    
-                except Exception as e:
-                    trans.rollback()
-                    logger.error(f"Error during JSON data insertion: {e}")
-                    return False
-                    
+                        )
+                        image_id = result.inserted_primary_key[0]
+                        image_id_cache[filename] = image_id
+
+                    demo = record.get("demographic")
+                    if demo:
+                        demographics_records.append(self._prepare_demographic_record(image_id, demo))
+
+                    for shoe in record.get("shoes", []):
+                        if isinstance(shoe, dict):
+                            shoes_records.append(self._prepare_shoe_record(image_id, shoe))
+
+                if demographics_records:
+                    conn.execute(insert(self.person_demographics), demographics_records)
+                if shoes_records:
+                    conn.execute(insert(self.shoe_detections), shoes_records)
+
+                logger.info(
+                    f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images, "
+                    f"{len(demographics_records)} demographics, {len(shoes_records)} shoes"
+                )
+
+                logger.info(f"Calculating metrics for marathon {marathon_id}...")
+                self.calculate_and_store_marathon_metrics(marathon_id)
+                return True
+
         except Exception as e:
             logger.error(f"Failed to insert parsed JSON data: {e}")
             return False
 
-    def _insert_demographic_record(self, conn, demo_item: Dict) -> Optional[int]:
-        """Helper method to insert a demographic record."""
-        try:
-            image_id = demo_item['image_id']
-            demographic_data = demo_item['demographic_data']
-            
-            gender_data = demographic_data.get('gender', {})
-            age_data = demographic_data.get('age', {})
-            race_data = demographic_data.get('race', {})
-            person_bbox_list = demographic_data.get('bbox', [None, None, None, None])
-            
-            stmt = insert(self.person_demographics).values(
-                image_id=image_id,
-                gender_label=gender_data.get('label'),
-                gender_prob=gender_data.get('prob'),
-                age_label=age_data.get('label'),
-                age_prob=age_data.get('prob'),
-                race_label=race_data.get('label'),
-                race_prob=race_data.get('prob'),
-                person_bbox_x1=person_bbox_list[0] if len(person_bbox_list) > 0 else None,
-                person_bbox_y1=person_bbox_list[1] if len(person_bbox_list) > 1 else None,
-                person_bbox_x2=person_bbox_list[2] if len(person_bbox_list) > 2 else None,
-                person_bbox_y2=person_bbox_list[3] if len(person_bbox_list) > 3 else None
-            )
-            
-            result = conn.execute(stmt)
-            if result.inserted_primary_key:
-                return result.inserted_primary_key[0]
-            else:
-                logger.error(f"Failed to get demographic ID after insertion for image_id {demo_item['image_id']}")
-                return None
-            
-        except Exception as e:
-            logger.error(f"Error inserting demographic for image_id {demo_item['image_id']}: {e}")
-            return None
+    def _prepare_demographic_record(self, image_id: int, demographic_data: Dict) -> Dict:
+        """Transform demographic JSON data into a record for bulk insert."""
+        gender = demographic_data.get('gender', {})
+        age = demographic_data.get('age', {})
+        race = demographic_data.get('race', {})
+        bbox = demographic_data.get('bbox', [None, None, None, None])
 
-    def _insert_shoe_detection(self, conn, shoe_item: Dict) -> bool:
-        """Helper method to insert a shoe detection record."""
-        try:
-            image_id = shoe_item['image_id']
-            shoe_data = shoe_item['shoe_data']
-            
-            # Safe extraction of shoe data with proper null checks
-            label_data = shoe_data.get('label')
-            brand = label_data[0] if isinstance(label_data, list) and len(label_data) > 0 else label_data
-            
-            prob_data = shoe_data.get('prob')
-            prob = prob_data[0] if isinstance(prob_data, list) and len(prob_data) > 0 else prob_data
-            
-            bbox_data = shoe_data.get('bbox')
-            if isinstance(bbox_data, list) and len(bbox_data) > 0:
-                bbox_list = bbox_data[0] if isinstance(bbox_data[0], list) else bbox_data
-            else:
-                bbox_list = [None, None, None, None]
-            
-            confidence = shoe_data.get('confidence')
-            
-            stmt = insert(self.shoe_detections).values(
-                image_id=image_id,
-                brand=brand,
-                probability=prob,
-                confidence=confidence,
-                bbox_x1=bbox_list[0] if len(bbox_list) > 0 else None,
-                bbox_y1=bbox_list[1] if len(bbox_list) > 1 else None,
-                bbox_x2=bbox_list[2] if len(bbox_list) > 2 else None,
-                bbox_y2=bbox_list[3] if len(bbox_list) > 3 else None
-            )
-            
-            conn.execute(stmt)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error inserting shoe detection for image_id {shoe_item['image_id']}: {e}")
-            return False
+        return {
+            'image_id': image_id,
+            'gender_label': gender.get('label'),
+            'gender_prob': gender.get('prob'),
+            'age_label': age.get('label'),
+            'age_prob': age.get('prob'),
+            'race_label': race.get('label'),
+            'race_prob': race.get('prob'),
+            'person_bbox_x1': bbox[0] if len(bbox) > 0 else None,
+            'person_bbox_y1': bbox[1] if len(bbox) > 1 else None,
+            'person_bbox_x2': bbox[2] if len(bbox) > 2 else None,
+            'person_bbox_y2': bbox[3] if len(bbox) > 3 else None,
+        }
+
+    def _prepare_shoe_record(self, image_id: int, shoe_data: Dict) -> Dict:
+        """Transform shoe detection JSON data into a record for bulk insert."""
+        label = shoe_data.get('label')
+        brand = label[0] if isinstance(label, list) and label else label
+
+        prob_data = shoe_data.get('prob')
+        prob = prob_data[0] if isinstance(prob_data, list) and prob_data else prob_data
+
+        bbox_data = shoe_data.get('bbox')
+        if isinstance(bbox_data, list) and bbox_data:
+            bbox_list = bbox_data[0] if isinstance(bbox_data[0], list) else bbox_data
+        else:
+            bbox_list = [None, None, None, None]
+
+        return {
+            'image_id': image_id,
+            'brand': brand,
+            'probability': prob,
+            'confidence': shoe_data.get('confidence'),
+            'bbox_x1': bbox_list[0] if len(bbox_list) > 0 else None,
+            'bbox_y1': bbox_list[1] if len(bbox_list) > 1 else None,
+            'bbox_x2': bbox_list[2] if len(bbox_list) > 2 else None,
+            'bbox_y2': bbox_list[3] if len(bbox_list) > 3 else None,
+        }
 
     def delete_marathon_by_id(self, marathon_id: int) -> bool:
         """
