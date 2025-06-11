@@ -1,9 +1,7 @@
 import streamlit as st
 import re
 from ui_components import page_header_with_logout
-from database_abstraction import (db, hasher, update_user_email as db_update_email, 
-                     update_user_password as db_update_password, add_user, get_all_users, 
-                     delete_user, update_user_role)
+from database_abstraction import db, hasher
 from sqlalchemy import text
 
 # --- Page Config ---
@@ -38,7 +36,7 @@ def update_user_email_with_validation(user_id, new_email):
             if result:
                 return False, "Este email já está em uso por outra conta."
             
-            if db_update_email(user_id, new_email):
+            if db.update_user_email(user_id, new_email):
                 return True, "Email atualizado com sucesso!"
             else:
                 return False, "Erro ao atualizar email. Por favor, tente novamente."
@@ -59,7 +57,7 @@ def update_user_password_with_validation(user_id, current_password, new_password
                 return False, "Senha atual incorreta."
             
             # Use database function to update password
-            if db_update_password(user_id, new_password):
+            if db.update_user_password(user_id, new_password):
                 return True, "Senha atualizada com sucesso!"
             else:
                 return False, "Erro ao atualizar senha. Por favor, tente novamente."
@@ -169,7 +167,7 @@ if is_admin:
         st.write("**Usuários cadastrados no sistema:**")
         
         # Get all users
-        all_users = get_all_users()
+        all_users = db.get_all_users()
         
         if all_users:
             for user in all_users:
@@ -211,7 +209,7 @@ if is_admin:
                 elif len(new_user_password) < 6:
                     st.error("A senha deve ter pelo menos 6 caracteres.")
                 else:
-                    if add_user(new_user_email, new_user_password, new_user_is_admin):
+                    if db.add_user(new_user_email, new_user_password, new_user_is_admin):
                         role_text = "administrador" if new_user_is_admin else "usuário"
                         st.success(f"Usuário {role_text} '{new_user_email}' adicionado com sucesso!")
                         st.rerun()
@@ -221,7 +219,7 @@ if is_admin:
     with tab_manage:
         st.write("**Gerenciar usuários existentes:**")
         
-        all_users = get_all_users()
+        all_users = db.get_all_users()
         
         if all_users:
             # Filter out current user from management
@@ -253,7 +251,7 @@ if is_admin:
                         if st.button("Atualizar Função", key=f"update_role_{selected_user_id}"):
                             new_is_admin = (new_role == "Administrador")
                             if new_is_admin != selected_user['is_admin']:
-                                if update_user_role(selected_user_id, new_is_admin):
+                                if db.update_user_role(selected_user_id, new_is_admin):
                                     st.success(f"Função atualizada para {new_role}!")
                                     st.rerun()
                                 else:
@@ -279,7 +277,7 @@ if is_admin:
             delete_user_id = int(user_key.replace("confirm_delete_user_", ""))
             
             # Find user email for confirmation
-            all_users = get_all_users()
+            all_users = db.get_all_users()
             delete_user_email = next((u['email'] for u in all_users if u['user_id'] == delete_user_id), "Usuário desconhecido")
             
             st.error(f"⚠️ **Confirmação necessária**: Tem certeza que deseja excluir o usuário '{delete_user_email}'?")
@@ -288,7 +286,7 @@ if is_admin:
             
             with col_confirm:
                 if st.button("✅ Confirmar Exclusão", key=f"confirm_yes_user_{delete_user_id}"):
-                    if delete_user(delete_user_id):
+                    if db.delete_user(delete_user_id):
                         st.success(f"Usuário '{delete_user_email}' excluído com sucesso!")
                         # Clear confirmation state
                         del st.session_state[user_key]
