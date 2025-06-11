@@ -12,7 +12,7 @@ import pandas as pd
 from sqlalchemy import (
     create_engine, text, MetaData, Table, Column, Integer, String, 
     Float, Boolean, DateTime, Text, ForeignKey, UniqueConstraint,
-    select, insert, update, delete, and_, or_
+    select, insert, update, delete, and_, or_, func
 )
 from sqlalchemy.engine import Engine, Connection
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -48,6 +48,7 @@ class DatabaseManager:
                 pool_recycle=3600
             )
             logger.info(f"Database engine initialized: {self.engine.url.drivername}")
+            logger.info(f"Database URL: {self.engine.url}")
         except Exception as e:
             logger.error(f"Failed to initialize database engine: {e}")
             raise
@@ -413,6 +414,7 @@ class DatabaseManager:
                     f"{len(demographics_records)} demographics, {len(shoes_records)} shoes"
                 )
 
+                conn.commit()
                 logger.info(f"Calculating metrics for marathon {marathon_id}...")
                 self.calculate_and_store_marathon_metrics(marathon_id)
                 return True
@@ -530,10 +532,22 @@ class DatabaseManager:
         This function should be called after importing marathon data.
         """
         try:
-            # Get all data for this marathon
+            logger.info(f"Starting metrics calculation for marathon {marathon_id}")
+            
+            # Get all data for this marathon directly (this will show if data exists)
             df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
             
+            logger.info(f"Retrieved DataFrames - df_flat shape: {df_flat.shape}, df_raw shape: {df_raw.shape}")
+            
+            # Debug: Log actual data counts from the DataFrames
+            if not df_flat.empty:
+                images_count = df_flat['image_id'].nunique() if 'image_id' in df_flat.columns else 0
+                shoes_count = df_flat[df_flat['shoe_brand'].notna()]['shoe_brand'].count() if 'shoe_brand' in df_flat.columns else 0
+                demographics_count = df_flat[df_flat['person_gender'].notna()]['person_gender'].count() if 'person_gender' in df_flat.columns else 0
+                logger.info(f"From DataFrame: {images_count} images, {shoes_count} shoes, {demographics_count} demographics")
+            
             if df_flat.empty and df_raw.empty:
+                logger.warning(f"No data found for marathon {marathon_id}, storing empty metrics")
                 # Store empty metrics
                 stmt = insert(self.marathon_metrics).values(
                     marathon_id=marathon_id,
@@ -550,51 +564,78 @@ class DatabaseManager:
                     category_distribution_json='{}',
                     top_brands_json='[]'
                 )
-                # Use upsert operation (INSERT ... ON CONFLICT)
                 with self.get_connection() as conn:
-                    # First try to delete existing metrics
                     delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
                     conn.execute(delete_existing)
-                    # Then insert new metrics
                     conn.execute(stmt)
                     conn.commit()
                 return
             
             # Import the processing function
-            from data_processing import process_queried_data_for_report
+            try:
+                from data_processing import process_queried_data_for_report
+                logger.info("Successfully imported process_queried_data_for_report")
+            except ImportError as ie:
+                logger.error(f"Failed to import data_processing module: {ie}")
+                return
             
             # Calculate metrics using existing function
+            logger.info("Calling process_queried_data_for_report...")
             metrics = process_queried_data_for_report(df_flat, df_raw)
+            logger.info(f"Metrics calculation completed. Keys: {list(metrics.keys())}")
             
-            # Extract key metrics
+            # Extract key metrics with better error handling
             total_images = metrics.get("total_images_selected", 0)
             total_shoes = metrics.get("total_shoes_detected", 0)
             total_persons = metrics.get("persons_analyzed_count", 0)
             unique_brands = metrics.get("unique_brands_count", 0)
+            
+            logger.info(f"Extracted metrics: images={total_images}, shoes={total_shoes}, persons={total_persons}, brands={unique_brands}")
             
             leader_info = metrics.get("leader_brand_info", {})
             leader_name = leader_info.get("name", "N/A")
             leader_count = leader_info.get("count", 0)
             leader_percentage = leader_info.get("percentage", 0.0)
             
-            # Convert complex data to JSON strings
-            brand_counts_json = metrics["brand_counts_all_selected"].to_json() if not metrics["brand_counts_all_selected"].empty else "{}"
+            # Convert complex data to JSON strings with better error handling
+            try:
+                brand_counts_all = metrics.get("brand_counts_all_selected", pd.Series())
+                brand_counts_json = "{}"
+                if isinstance(brand_counts_all, pd.Series) and not brand_counts_all.empty:
+                    brand_counts_json = brand_counts_all.to_json()
+                elif isinstance(brand_counts_all, dict) and brand_counts_all:
+                    brand_counts_json = json.dumps(brand_counts_all)
+                
+                gender_dist_json = "{}"
+                gender_dist = metrics.get("gender_brand_distribution", pd.DataFrame())
+                if isinstance(gender_dist, pd.DataFrame) and not gender_dist.empty:
+                    gender_dist_json = gender_dist.to_json()
+                
+                race_dist_json = "{}"
+                race_dist = metrics.get("race_brand_distribution", pd.DataFrame())
+                if isinstance(race_dist, pd.DataFrame) and not race_dist.empty:
+                    race_dist_json = race_dist.to_json()
+                
+                category_dist_json = "{}"
+                category_dist = metrics.get("brand_counts_by_category", pd.DataFrame())
+                if isinstance(category_dist, pd.DataFrame) and not category_dist.empty:
+                    category_dist_json = category_dist.to_json()
+                
+                top_brands_json = "[]"
+                top_brands = metrics.get("top_brands_all_selected", pd.DataFrame())
+                if isinstance(top_brands, pd.DataFrame) and not top_brands.empty:
+                    top_brands_json = top_brands.to_json(orient='records')
+                    
+            except Exception as json_error:
+                logger.error(f"Error converting metrics to JSON: {json_error}")
+                # Use default values if conversion fails
+                brand_counts_json = "{}"
+                gender_dist_json = "{}"
+                race_dist_json = "{}"
+                category_dist_json = "{}"
+                top_brands_json = "[]"
             
-            gender_dist_json = "{}"
-            if not metrics["gender_brand_distribution"].empty:
-                gender_dist_json = metrics["gender_brand_distribution"].to_json()
-            
-            race_dist_json = "{}"
-            if not metrics["race_brand_distribution"].empty:
-                race_dist_json = metrics["race_brand_distribution"].to_json()
-            
-            category_dist_json = "{}"
-            if not metrics["brand_counts_by_category"].empty:
-                category_dist_json = metrics["brand_counts_by_category"].to_json()
-            
-            top_brands_json = "[]"
-            if not metrics["top_brands_all_selected"].empty:
-                top_brands_json = metrics["top_brands_all_selected"].to_json(orient='records')
+            logger.info(f"Final metrics to store: images={total_images}, shoes={total_shoes}, persons={total_persons}")
             
             # Store calculated metrics
             stmt = insert(self.marathon_metrics).values(
@@ -622,10 +663,21 @@ class DatabaseManager:
                 conn.execute(stmt)
                 conn.commit()
                 
-            logger.info(f"Calculated and stored metrics for marathon {marathon_id}")
+            logger.info(f"Successfully calculated and stored metrics for marathon {marathon_id}")
+            
+            # Verify the stored data
+            with self.get_connection() as conn:
+                verify_stmt = select(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
+                stored_metrics = conn.execute(verify_stmt).fetchone()
+                if stored_metrics:
+                    logger.info(f"Verified stored metrics: images={stored_metrics.total_images}, shoes={stored_metrics.total_shoes_detected}")
+                else:
+                    logger.error("Failed to verify stored metrics - no record found")
             
         except Exception as e:
             logger.error(f"Error calculating metrics for marathon {marathon_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def get_marathon_list_from_db(self) -> List[Dict]:
         """Get list of all marathons from the database."""
@@ -690,11 +742,11 @@ class DatabaseManager:
                     LEFT JOIN person_demographics p ON i.image_id = p.image_id
                     WHERE m.marathon_id IN ({named_placeholders})
                 """
-
+                logger.info(f"Executing query for flattened data: {query_flat} with params {params}")
                 # Execute with named parameters
                 result_flat = conn.execute(text(query_flat), params)
                 df_flat_selected = pd.DataFrame(result_flat.fetchall(), columns=result_flat.keys())
-
+                logger.info(f"Retrieved {len(df_flat_selected)} rows of flattened data")
                 # Query for raw-like structure for counts
                 query_raw_reconstructed = f"""
                     SELECT 
