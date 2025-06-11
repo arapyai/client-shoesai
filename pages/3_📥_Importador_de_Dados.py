@@ -129,7 +129,7 @@ if not existing_marathons_df.empty:
     # Display marathons in an organized way with delete buttons
     for index, marathon in existing_marathons_df.iterrows():
         with st.container(border=True):
-            col_info, col_actions = st.columns([4, 1])
+            col_info, col_calculate, col_remove = st.columns([4, 1,1])
             
             with col_info:
                 st.write(f"**{marathon['name']}**")
@@ -144,10 +144,36 @@ if not existing_marathons_df.empty:
                     upload_date = str(marathon['upload_timestamp']).split()[0]
                     details.append(f"📥 Importado em: {upload_date}")
                 
+                #add summary of metrics get from database
+                metrics = db.get_precomputed_marathon_metrics([marathon['marathon_id']])
+                if metrics:
+                    details.append(f"📊 Imagens: {metrics.get('total_images_selected', 0)} | "
+                                   f"Calçados Detectados: {metrics.get('total_shoes_detected', 0)} | "
+                                   f"Pessoas Analisadas: {metrics.get('persons_analyzed_count', 0)}")
+                else:
+                    details.append("📊 Métricas não calculadas ainda.")
+                
                 if details:
                     st.caption(" | ".join(details))
             
-            with col_actions:
+            with col_calculate:
+                #recalcular as métrocas
+                if st.button(
+                    "🔄 Recalcular Métricas", 
+                    key=f"recalculate_metrics_{marathon['marathon_id']}", 
+                    help="Recalcular as métricas para esta prova",
+                    type="primary",
+                    use_container_width=True
+                ):
+                    # Trigger recalculation logic
+                    try:
+                        db.calculate_and_store_marathon_metrics(marathon['marathon_id'])
+                        st.success(f"Métricas calculadas com sucesso para a prova '{marathon['name']}'!")
+                    except Exception as e:
+                        st.error(f"Erro ao recalcular métricas: {e}")
+                        import traceback
+                        st.error(traceback.format_exc())
+            with col_remove:
                 # Add delete button for each marathon
                 if st.button(
                     "🗑️ Excluir", 

@@ -413,10 +413,6 @@ class DatabaseManager:
                     f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images, "
                     f"{len(demographics_records)} demographics, {len(shoes_records)} shoes"
                 )
-
-                conn.commit()
-                logger.info(f"Calculating metrics for marathon {marathon_id}...")
-                self.calculate_and_store_marathon_metrics(marathon_id)
                 return True
 
         except Exception as e:
