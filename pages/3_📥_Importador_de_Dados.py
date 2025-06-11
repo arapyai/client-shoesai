@@ -67,7 +67,7 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
                 # to [{'col1':'a', 'col2':1}, {'col1':'b', 'col2':2}]
                 df_temp = pd.DataFrame(json_data_raw)
                 image_data_list_for_db = df_temp.to_dict(orient='records')
-                
+
                 progress_bar.progress(10, text="Metadados da prova sendo salvos...")
                 marathon_id = db.add_marathon_metadata(
                     name=marathon_name,

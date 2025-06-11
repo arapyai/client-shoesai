@@ -4,6 +4,7 @@ Database abstraction layer using SQLAlchemy Core.
 Supports SQLite, PostgreSQL, and MySQL.
 """
 
+import json
 import logging
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union, Tuple
@@ -127,7 +128,7 @@ class DatabaseManager:
         self.person_demographics = Table(
             'person_demographics', self.metadata,
             Column('demographic_id', Integer, primary_key=True, autoincrement=True),
-            Column('image_id', Integer, ForeignKey('images.image_id'), unique=True, nullable=False),
+            Column('image_id', Integer, ForeignKey('images.image_id'), nullable=False),
             Column('gender_label', String(50)),
             Column('gender_prob', Float),
             Column('age_label', String(50)),
@@ -164,10 +165,11 @@ class DatabaseManager:
             
             self.metadata.create_all(self.engine)
             logger.info("Database tables created/ensured.")
+            
         except Exception as e:
             logger.error(f"Failed to create tables: {e}")
             raise
-    
+
     def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
         """Execute a raw SQL query and return results as list of dictionaries."""
         with self.get_connection() as conn:
@@ -336,10 +338,14 @@ class DatabaseManager:
                     upload_timestamp=datetime.now()
                 )
                 result = conn.execute(stmt)
-                marathon_id = result.inserted_primary_key[0]
-                conn.commit()
-                logger.info(f"Successfully added marathon '{name}' with ID {marathon_id}")
-                return marathon_id
+                if result.inserted_primary_key:
+                    marathon_id = result.inserted_primary_key[0]
+                    conn.commit()
+                    logger.info(f"Successfully added marathon '{name}' with ID {marathon_id}")
+                    return marathon_id
+                else:
+                    logger.error(f"Failed to get marathon ID after insertion")
+                    return None
         except IntegrityError:
             logger.error(f"Marathon with name '{name}' already exists")
             return None
@@ -350,7 +356,8 @@ class DatabaseManager:
     def insert_parsed_json_data(self, marathon_id: int, parsed_json_data_list: List[Dict]) -> bool:
         """
         Insert data parsed from a JSON file (list of image records) into the database.
-        Handles duplicate filenames by inserting the image once and linking detections.
+        Handles the JSON structure where each image can have multiple demographics and each person can have multiple shoes.
+        Processing order: images → demographics → shoes
         """
         if not parsed_json_data_list:
             logger.warning("No data provided for insertion")
@@ -360,7 +367,23 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 trans = conn.begin()
                 try:
+                    # Step 1: Insert all images first
                     image_id_cache = {}  # To store image_id for (marathon_id, filename)
+                    #check images already in the database
+                    existing_images_stmt = select(
+                        self.images.c.image_id, 
+                        self.images.c.marathon_id, 
+                        self.images.c.filename
+                    ).where(self.images.c.marathon_id == marathon_id)
+                    existing_images = conn.execute(existing_images_stmt).fetchall()
+                    for row in existing_images:
+                        image_id_cache[(row.marathon_id, row.filename)] = row.image_id
+                    logger.info(f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache")
+
+                    demographics_to_insert = []  # Queue for demographics insertion
+                    shoes_to_insert = []  # Queue for shoes insertion
+                    
+                    logger.info(f"Step 1: Processing {len(parsed_json_data_list)} image records...")
                     
                     for image_record_dict in parsed_json_data_list:
                         img_category = image_record_dict.get('folder')  # trocar por label depois
@@ -372,104 +395,61 @@ class DatabaseManager:
                         image_key = (marathon_id, img_filename)
                         current_image_id = None
                         
+                        # Check if we already processed this image in our cache
                         if image_key in image_id_cache:
                             current_image_id = image_id_cache[image_key]
+                            logger.debug(f"Using cached image ID {current_image_id} for {img_filename}")
                         else:
-                            try:
-                                # Insert image
-                                stmt = insert(self.images).values(
-                                    marathon_id=marathon_id,
-                                    filename=img_filename,
-                                    original_width=image_record_dict.get('original_width'),
-                                    original_height=image_record_dict.get('original_height'),
-                                    category=img_category
-                                )
-                                result = conn.execute(stmt)
-                                current_image_id = result.inserted_primary_key[0]
-                                image_id_cache[image_key] = current_image_id
-                            except IntegrityError:
-                                # Fetch existing image_id if insert failed due to unique constraint
-                                existing_image_stmt = select(self.images.c.image_id).where(
-                                    and_(self.images.c.marathon_id == marathon_id,
-                                         self.images.c.filename == img_filename)
-                                )
-                                existing_image = conn.execute(existing_image_stmt).fetchone()
-                                if existing_image:
-                                    current_image_id = existing_image.image_id
-                                    image_id_cache[image_key] = current_image_id
-                                else:
-                                    logger.error(f"Could not insert or find image for {img_filename} in marathon {marathon_id}")
-                                    continue
-                            except Exception as e_img:
-                                logger.error(f"Error inserting image {img_filename}: {e_img}")
-                                continue
-                        
-                        if current_image_id is None:
-                            continue
-                        
-                        # Insert Shoe Detections (can be multiple per image_id)
+                            # Insert the image and get its ID
+                            stmt = insert(self.images).values(
+                                marathon_id=marathon_id,
+                                filename=img_filename,
+                                original_width=image_record_dict.get('original_width'),
+                                original_height=image_record_dict.get('original_height'),
+                                category=img_category
+                            )
+                            
+                            result = conn.execute(stmt)
+                            current_image_id = result.inserted_primary_key[0]
+                            image_id_cache[image_key] = current_image_id  # Cache the new image ID
+                                
+                            
+                        # Collect demographics for later insertion
+                        demographics = image_record_dict.get('demographic', {})
+                        if demographics:
+                            demographics_to_insert.append({
+                                'image_id': current_image_id,
+                                'demographic_data': demographics
+                            })
+                            
                         shoes = image_record_dict.get('shoes', [])
                         if isinstance(shoes, list):
                             for shoe in shoes:
                                 if isinstance(shoe, dict):
-                                    # Safe extraction of shoe data with proper null checks
-                                    label_data = shoe.get('label')
-                                    brand = label_data[0] if isinstance(label_data, list) and len(label_data) > 0 else None
-                                    
-                                    prob_data = shoe.get('prob')
-                                    prob = prob_data[0] if isinstance(prob_data, list) and len(prob_data) > 0 else None
-                                    
-                                    bbox_data = shoe.get('bbox')
-                                    bbox_list = bbox_data[0] if isinstance(bbox_data, list) and len(bbox_data) > 0 else [None]*4
-                                    
-                                    confidence = shoe.get('confidence')
-                                    try:
-                                        stmt = insert(self.shoe_detections).values(
-                                            image_id=current_image_id,
-                                            brand=brand,
-                                            probability=prob,
-                                            confidence=confidence,
-                                            bbox_x1=bbox_list[0],
-                                            bbox_y1=bbox_list[1],
-                                            bbox_x2=bbox_list[2],
-                                            bbox_y2=bbox_list[3]
-                                        )
-                                        conn.execute(stmt)
-                                    except Exception as e_shoe:
-                                        logger.error(f"Error inserting shoe for image_id {current_image_id}: {e_shoe}")
-                                        # Continue with other shoes instead of breaking
-                        
-                        # Insert Person Demographics (only once per image_id due to UNIQUE constraint)
-                        demographic = image_record_dict.get('demographic')
-                        if isinstance(demographic, dict):
-                            gender_data = demographic.get('gender', {})
-                            age_data = demographic.get('age', {})
-                            race_data = demographic.get('race', {})
-                            person_bbox_list = demographic.get('bbox', [None]*4)
-                            
-                            try:
-                                stmt = insert(self.person_demographics).values(
-                                    image_id=current_image_id,
-                                    gender_label=gender_data.get('label'),
-                                    gender_prob=gender_data.get('prob'),
-                                    age_label=age_data.get('label'),
-                                    age_prob=age_data.get('prob'),
-                                    race_label=race_data.get('label'),
-                                    race_prob=race_data.get('prob'),
-                                    person_bbox_x1=person_bbox_list[0],
-                                    person_bbox_y1=person_bbox_list[1],
-                                    person_bbox_x2=person_bbox_list[2],
-                                    person_bbox_y2=person_bbox_list[3]
-                                )
-                                conn.execute(stmt)
-                            except IntegrityError:
-                                # This is expected if demographic data for this image_id was already inserted
-                                pass
-                            except Exception as e_demo:
-                                logger.error(f"Error inserting demographic for image_id {current_image_id}: {e_demo}")
+                                    shoes_to_insert.append({
+                                        'image_id': current_image_id,
+                                        'shoe_data': shoe
+                                    })
+                    
+                    # Step 2: Insert all demographics
+                    logger.info(f"Step 2: Inserting {len(demographics_to_insert)} demographic records...")
+                    inserted_demographic_ids = []
+                    
+                    for demo_item in demographics_to_insert:
+                        demographic_id = self._insert_demographic_record(conn, demo_item)
+                        if demographic_id:
+                            inserted_demographic_ids.append(demographic_id)
+                    
+                    # Step 3: Insert all shoes
+                    logger.info(f"Step 3: Inserting {len(shoes_to_insert)} shoe detection records...")
+                    inserted_shoe_count = 0
+                    
+                    for shoe_item in shoes_to_insert:
+                        if self._insert_shoe_detection(conn, shoe_item):
+                            inserted_shoe_count += 1
                     
                     trans.commit()
-                    logger.info(f"Successfully inserted {len(parsed_json_data_list)} image records for marathon {marathon_id}")
+                    logger.info(f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images, {len(inserted_demographic_ids)} demographics, {inserted_shoe_count} shoes")
                     
                     # Calculate and store pre-computed metrics after successful import
                     logger.info(f"Calculating metrics for marathon {marathon_id}...")
@@ -484,6 +464,81 @@ class DatabaseManager:
                     
         except Exception as e:
             logger.error(f"Failed to insert parsed JSON data: {e}")
+            return False
+
+    def _insert_demographic_record(self, conn, demo_item: Dict) -> Optional[int]:
+        """Helper method to insert a demographic record."""
+        try:
+            image_id = demo_item['image_id']
+            demographic_data = demo_item['demographic_data']
+            
+            gender_data = demographic_data.get('gender', {})
+            age_data = demographic_data.get('age', {})
+            race_data = demographic_data.get('race', {})
+            person_bbox_list = demographic_data.get('bbox', [None, None, None, None])
+            
+            stmt = insert(self.person_demographics).values(
+                image_id=image_id,
+                gender_label=gender_data.get('label'),
+                gender_prob=gender_data.get('prob'),
+                age_label=age_data.get('label'),
+                age_prob=age_data.get('prob'),
+                race_label=race_data.get('label'),
+                race_prob=race_data.get('prob'),
+                person_bbox_x1=person_bbox_list[0] if len(person_bbox_list) > 0 else None,
+                person_bbox_y1=person_bbox_list[1] if len(person_bbox_list) > 1 else None,
+                person_bbox_x2=person_bbox_list[2] if len(person_bbox_list) > 2 else None,
+                person_bbox_y2=person_bbox_list[3] if len(person_bbox_list) > 3 else None
+            )
+            
+            result = conn.execute(stmt)
+            if result.inserted_primary_key:
+                return result.inserted_primary_key[0]
+            else:
+                logger.error(f"Failed to get demographic ID after insertion for image_id {demo_item['image_id']}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error inserting demographic for image_id {demo_item['image_id']}: {e}")
+            return None
+
+    def _insert_shoe_detection(self, conn, shoe_item: Dict) -> bool:
+        """Helper method to insert a shoe detection record."""
+        try:
+            image_id = shoe_item['image_id']
+            shoe_data = shoe_item['shoe_data']
+            
+            # Safe extraction of shoe data with proper null checks
+            label_data = shoe_data.get('label')
+            brand = label_data[0] if isinstance(label_data, list) and len(label_data) > 0 else label_data
+            
+            prob_data = shoe_data.get('prob')
+            prob = prob_data[0] if isinstance(prob_data, list) and len(prob_data) > 0 else prob_data
+            
+            bbox_data = shoe_data.get('bbox')
+            if isinstance(bbox_data, list) and len(bbox_data) > 0:
+                bbox_list = bbox_data[0] if isinstance(bbox_data[0], list) else bbox_data
+            else:
+                bbox_list = [None, None, None, None]
+            
+            confidence = shoe_data.get('confidence')
+            
+            stmt = insert(self.shoe_detections).values(
+                image_id=image_id,
+                brand=brand,
+                probability=prob,
+                confidence=confidence,
+                bbox_x1=bbox_list[0] if len(bbox_list) > 0 else None,
+                bbox_y1=bbox_list[1] if len(bbox_list) > 1 else None,
+                bbox_x2=bbox_list[2] if len(bbox_list) > 2 else None,
+                bbox_y2=bbox_list[3] if len(bbox_list) > 3 else None
+            )
+            
+            conn.execute(stmt)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error inserting shoe detection for image_id {shoe_item['image_id']}: {e}")
             return False
 
     def delete_marathon_by_id(self, marathon_id: int) -> bool:
@@ -682,7 +737,12 @@ class DatabaseManager:
 
         try:
             with self.get_connection() as conn:
-                placeholders = ','.join(['?'] * len(marathon_ids_list))
+                # Use SQLAlchemy's text() with named parameters for PostgreSQL compatibility
+                from sqlalchemy import text
+                
+                # Create named parameters for the IN clause
+                params = {f'marathon_id_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids_list)}
+                named_placeholders = ','.join([f':marathon_id_{i}' for i in range(len(marathon_ids_list))])
 
                 # Query for flattened data (shoe & demographic per image)
                 query_flat = f"""
@@ -702,10 +762,12 @@ class DatabaseManager:
                     JOIN images i ON m.marathon_id = i.marathon_id
                     LEFT JOIN shoe_detections s ON i.image_id = s.image_id
                     LEFT JOIN person_demographics p ON i.image_id = p.image_id
-                    WHERE m.marathon_id IN ({placeholders})
+                    WHERE m.marathon_id IN ({named_placeholders})
                 """
 
-                df_flat_selected = pd.read_sql_query(query_flat, conn, params=tuple(marathon_ids_list))
+                # Execute with named parameters
+                result_flat = conn.execute(text(query_flat), params)
+                df_flat_selected = pd.DataFrame(result_flat.fetchall(), columns=result_flat.keys())
 
                 # Query for raw-like structure for counts
                 query_raw_reconstructed = f"""
@@ -719,9 +781,11 @@ class DatabaseManager:
                         (SELECT COUNT(*) FROM person_demographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics
                     FROM marathons m
                     JOIN images i ON m.marathon_id = i.marathon_id
-                    WHERE m.marathon_id IN ({placeholders})
+                    WHERE m.marathon_id IN ({named_placeholders})
                 """
-                df_raw_reconstructed_for_counts = pd.read_sql_query(query_raw_reconstructed, conn, params=tuple(marathon_ids_list))
+                
+                result_raw = conn.execute(text(query_raw_reconstructed), params)
+                df_raw_reconstructed_for_counts = pd.DataFrame(result_raw.fetchall(), columns=result_raw.keys())
 
                 return df_flat_selected, df_raw_reconstructed_for_counts
         except Exception as e:
@@ -785,7 +849,6 @@ class DatabaseManager:
 
                     # Combine brand counts
                     if row.brand_counts_json and row.brand_counts_json != '{}':
-                        import json
                         brand_counts_dict = json.loads(row.brand_counts_json)
                         brand_counts = pd.Series(brand_counts_dict, dtype='int64')
                         combined_brand_counts = combined_brand_counts.add(brand_counts, fill_value=0)
@@ -911,7 +974,6 @@ class DatabaseManager:
                     # Parse individual marathon data
                     brand_counts = pd.Series(dtype='int64')
                     if row.brand_counts_json and row.brand_counts_json != '{}':
-                        import json
                         brand_counts_dict = json.loads(row.brand_counts_json)
                         brand_counts = pd.Series(brand_counts_dict, dtype='int64')
 
