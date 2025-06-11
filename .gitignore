@@ -15,9 +15,5 @@ venv/
 
 # Database backups
 backup_*.json
-
-# Streamlit cache
-.streamlit/
-
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
