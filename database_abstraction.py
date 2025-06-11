@@ -6,6 +6,7 @@ Supports SQLite, PostgreSQL, and MySQL.
 
 import json
 import logging
+from tqdm import tqdm
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union, Tuple
 import pandas as pd
@@ -375,7 +376,7 @@ class DatabaseManager:
                 demographics_records = []
                 shoes_records = []
 
-                for record in parsed_json_data_list:
+                for record in tqdm(parsed_json_data_list):
                     filename = record.get("filename")
                     if not filename:
                         logger.warning("Skipping record with no filename")
@@ -791,13 +792,6 @@ class DatabaseManager:
                     WHERE met.marathon_id IN ({named_placeholders})
                 """
                 result = conn.execute(text(query), params).fetchall()
-
-                if not result:
-                    # No pre-computed metrics found, fall back to real-time calculation
-                    logger.warning("No pre-computed metrics found, falling back to real-time calculation")
-                    df_flat, df_raw = self.get_data_for_selected_marathons_db(marathon_ids)
-                    from data_processing import process_queried_data_for_report
-                    return process_queried_data_for_report(df_flat, df_raw)
 
                 # Aggregate metrics across marathons
                 total_images = sum(row.total_images for row in result)
