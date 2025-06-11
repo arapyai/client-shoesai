@@ -1,12 +1,13 @@
 import streamlit as st
 import re
 from ui_components import page_header_with_logout
-from database import (get_db_connection, hasher, update_user_email as db_update_email, 
+from database_abstraction import (db, hasher, update_user_email as db_update_email, 
                      update_user_password as db_update_password, add_user, get_all_users, 
                      delete_user, update_user_role)
+from sqlalchemy import text
 
 # --- Page Config ---
-st.set_page_config(layout="wide", page_title="CourtShoes AI - Perfil do Usuário")
+st.set_page_config(layout="wide", page_title="Shoes AI - Perfil do Usuário")
 
 # --- Authentication Check ---
 if not st.session_state.get("logged_in", False):
@@ -29,46 +30,41 @@ def update_user_email_with_validation(user_id, new_email):
     if not is_valid_email(new_email):
         return False, "Email inválido. Por favor, forneça um email válido."
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # Check if email already exists
-        cursor.execute("SELECT user_id FROM Users WHERE email = ? AND user_id != ?", (new_email, user_id))
-        if cursor.fetchone():
-            return False, "Este email já está em uso por outra conta."
-        
-        if db_update_email(user_id, new_email):
-            return True, "Email atualizado com sucesso!"
-        else:
-            return False, "Erro ao atualizar email. Por favor, tente novamente."
-    except Exception as e:
-        return False, f"Erro ao atualizar email: {e}"
-    finally:
-        conn.close()
+    with db.get_connection() as conn:
+        try:
+            # Check if email already exists - update table name to use new schema
+            result = conn.execute(text("SELECT user_id FROM users WHERE email = :email AND user_id != :user_id"), 
+                                {"email": new_email, "user_id": user_id}).fetchone()
+            if result:
+                return False, "Este email já está em uso por outra conta."
+            
+            if db_update_email(user_id, new_email):
+                return True, "Email atualizado com sucesso!"
+            else:
+                return False, "Erro ao atualizar email. Por favor, tente novamente."
+        except Exception as e:
+            return False, f"Erro ao atualizar email: {e}"
 
 # Function to update user password with validation
 def update_user_password_with_validation(user_id, current_password, new_password):
     if len(new_password) < 6:
         return False, "A nova senha deve ter pelo menos 6 caracteres."
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # Verify current password
-        cursor.execute("SELECT hashed_password FROM Users WHERE user_id = ?", (user_id,))
-        user_record = cursor.fetchone()
-        if not user_record or not hasher.verify(current_password, user_record['hashed_password']):
-            return False, "Senha atual incorreta."
-        
-        # Use database function to update password
-        if db_update_password(user_id, new_password):
-            return True, "Senha atualizada com sucesso!"
-        else:
-            return False, "Erro ao atualizar senha. Por favor, tente novamente."
-    except Exception as e:
-        return False, f"Erro ao atualizar senha: {e}"
-    finally:
-        conn.close()
+    with db.get_connection() as conn:
+        try:
+            # Verify current password - update table name to use new schema
+            result = conn.execute(text("SELECT hashed_password FROM users WHERE user_id = :user_id"), 
+                                {"user_id": user_id}).fetchone()
+            if not result or not hasher.verify(current_password, result.hashed_password):
+                return False, "Senha atual incorreta."
+            
+            # Use database function to update password
+            if db_update_password(user_id, new_password):
+                return True, "Senha atualizada com sucesso!"
+            else:
+                return False, "Erro ao atualizar senha. Por favor, tente novamente."
+        except Exception as e:
+            return False, f"Erro ao atualizar senha: {e}"
 
 # Email validation function
 def is_valid_email(email):
@@ -135,16 +131,14 @@ with col2:
 st.subheader("Atividade da Conta")
 
 # Get marathons uploaded by this user
-conn = get_db_connection()
-cursor = conn.cursor()
-cursor.execute("""
-    SELECT name, event_date, location, upload_timestamp 
-    FROM Marathons 
-    WHERE uploaded_by_user_id = ? 
-    ORDER BY upload_timestamp DESC
-""", (user_id,))
-user_marathons = cursor.fetchall()
-conn.close()
+with db.get_connection() as conn:
+    result = conn.execute(text("""
+        SELECT name, event_date, location, upload_timestamp 
+        FROM marathons 
+        WHERE uploaded_by_user_id = :user_id 
+        ORDER BY upload_timestamp DESC
+    """), {"user_id": user_id}).fetchall()
+    user_marathons = [dict(row._mapping) for row in result]
 
 if user_marathons:
     st.write(f"Você importou {len(user_marathons)} provas:")

@@ -1,6 +1,6 @@
 # courtshoes_app.py
 import streamlit as st
-from database import verify_user, create_tables # Ensure create_tables is callable if run directly
+from database_abstraction import db
 
 # Page config should be the first Streamlit command
 st.set_page_config(page_title="Shoes.AI Login", initial_sidebar_state="collapsed")
@@ -44,12 +44,15 @@ def login_page():
             if login_button:
                 if not email or not password:
                     st.error("Por favor, preencha email e senha.")
+                elif not db:
+                    st.error("Erro na conexão com o banco de dados. Tente novamente mais tarde.")
                 else:
-                    user = verify_user(email, password)
+                    user = db.verify_user(email, password)
                     if user:
                         st.session_state.logged_in = True
                         st.session_state.user_info = user # STORE USER INFO HERE
                         st.success("Login bem-sucedido!")
+                        st.session_state.marathon_cache = None
                         st.switch_page("pages/1_📊_Relatório.py")
                         # st.rerun() # st.switch_page handles the rerun
                     else:
@@ -62,5 +65,6 @@ def login_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
-    create_tables() # Ensure tables exist when running the app for the first time or directly
+    if db:
+        db.create_tables()  # Ensure tables exist when running the app for the first time or directly
     login_page()

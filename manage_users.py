@@ -1,6 +1,6 @@
 # manage_users.py
 import argparse
-from database import add_user, create_tables
+from database_abstraction import add_user, create_tables
 
 def main():
     # Ensure tables exist

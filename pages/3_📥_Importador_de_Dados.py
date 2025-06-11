@@ -1,9 +1,9 @@
 import streamlit as st
 import json
 import pandas as pd
-from database import add_marathon_metadata, insert_parsed_json_data, get_db_connection, delete_marathon_by_id # Ensure this path is correct
+from database_abstraction import add_marathon_metadata, insert_parsed_json_data, get_db_connection, delete_marathon_by_id # Ensure this path is correct
 
-st.set_page_config(layout="wide", page_title="CourtShoes AI - Importador")
+st.set_page_config(layout="wide", page_title="Shoes AI - Importador")
 
 # --- Authentication Check ---
 if not st.session_state.get("logged_in", False):
@@ -117,13 +117,13 @@ st.subheader("🗂️ Provas Existentes no Sistema")
 st.caption("Gerencie as provas já importadas no sistema")
 
 # Get existing marathons from database
-conn_view = get_db_connection()
-existing_marathons_df = pd.read_sql_query("""
-    SELECT marathon_id, name, event_date, location, upload_timestamp 
-    FROM Marathons 
-    ORDER BY upload_timestamp DESC
-""", conn_view)
-conn_view.close()
+from database_abstraction import db
+with db.get_connection() as conn_view:
+    existing_marathons_df = pd.read_sql_query("""
+        SELECT marathon_id, name, event_date, location, upload_timestamp 
+        FROM marathons 
+        ORDER BY upload_timestamp DESC
+    """, conn_view)
 
 if not existing_marathons_df.empty:
     # Display marathons in an organized way with delete buttons

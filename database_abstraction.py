@@ -177,6 +177,8 @@ class DatabaseManager:
     def execute_query_df(self, query: str, params: Optional[List] = None) -> pd.DataFrame:
         """Execute a query and return results as pandas DataFrame."""
         try:
+            if not self.engine:
+                raise RuntimeError("Database engine not initialized")
             return pd.read_sql_query(query, self.engine, params=params)
         except Exception as e:
             logger.error(f"Failed to execute query as DataFrame: {e}")
@@ -316,6 +318,349 @@ class DatabaseManager:
             logger.error(f"Failed to update user role: {e}")
             return False
 
+    # Marathon Management Methods
+    def get_marathon_list_from_db(self) -> List[Dict]:
+        """Get list of all marathons from the database."""
+        try:
+            with self.get_connection() as conn:
+                stmt = select(
+                    self.marathons.c.marathon_id,
+                    self.marathons.c.name,
+                    self.marathons.c.event_date,
+                    self.marathons.c.location,
+                    self.marathons.c.distance_km,
+                    self.marathons.c.description
+                ).order_by(self.marathons.c.event_date.desc(), self.marathons.c.name.asc())
+                result = conn.execute(stmt).fetchall()
+                
+                return [
+                    {
+                        "id": row.marathon_id,
+                        "name": row.name,
+                        "event_date": row.event_date,
+                        "location": row.location,
+                        "distance_km": row.distance_km,
+                        "description": row.description
+                    }
+                    for row in result
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get marathon list: {e}")
+            return []
+
+    def get_data_for_selected_marathons_db(self, marathon_ids_list: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Get data for selected marathons from the database."""
+        if not marathon_ids_list:
+            return pd.DataFrame(), pd.DataFrame()
+
+        try:
+            with self.get_connection() as conn:
+                placeholders = ','.join(['?'] * len(marathon_ids_list))
+
+                # Query for flattened data (shoe & demographic per image)
+                query_flat = f"""
+                    SELECT
+                        m.marathon_id,
+                        m.name as marathon_name,
+                        i.image_id,
+                        i.filename,
+                        i.category,
+                        s.brand as shoe_brand,
+                        s.probability as shoe_prob,
+                        s.confidence as shoe_confidence,
+                        p.gender_label as person_gender,
+                        p.age_label as person_age,
+                        p.race_label as person_race
+                    FROM marathons m
+                    JOIN images i ON m.marathon_id = i.marathon_id
+                    LEFT JOIN shoe_detections s ON i.image_id = s.image_id
+                    LEFT JOIN person_demographics p ON i.image_id = p.image_id
+                    WHERE m.marathon_id IN ({placeholders})
+                """
+
+                df_flat_selected = pd.read_sql_query(query_flat, conn, params=tuple(marathon_ids_list))
+
+                # Query for raw-like structure for counts
+                query_raw_reconstructed = f"""
+                    SELECT 
+                        m.marathon_id,
+                        m.name as marathon_name,
+                        i.filename,
+                        i.category,
+                        i.original_width,
+                        i.original_height,
+                        (SELECT COUNT(*) FROM person_demographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics
+                    FROM marathons m
+                    JOIN images i ON m.marathon_id = i.marathon_id
+                    WHERE m.marathon_id IN ({placeholders})
+                """
+                df_raw_reconstructed_for_counts = pd.read_sql_query(query_raw_reconstructed, conn, params=tuple(marathon_ids_list))
+
+                return df_flat_selected, df_raw_reconstructed_for_counts
+        except Exception as e:
+            logger.error(f"Failed to get data for selected marathons: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+
+    def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
+        """Retrieve pre-computed metrics for selected marathons."""
+        if not marathon_ids:
+            return {"total_images_selected": 0, "total_shoes_detected": 0}
+
+        try:
+            with self.get_connection() as conn:
+                # Use execute_query method for simpler parameter handling
+                placeholders = ','.join(['?'] * len(marathon_ids))
+                query = f"""
+                    SELECT m.name as marathon_name, met.*
+                    FROM marathon_metrics met
+                    JOIN marathons m ON met.marathon_id = m.marathon_id
+                    WHERE met.marathon_id IN ({placeholders})
+                """
+                # Convert to dict for named parameters
+                params = {f'param_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids)}
+                named_placeholders = ','.join([f':param_{i}' for i in range(len(marathon_ids))])
+                query = f"""
+                    SELECT m.name as marathon_name, met.*
+                    FROM marathon_metrics met
+                    JOIN marathons m ON met.marathon_id = m.marathon_id
+                    WHERE met.marathon_id IN ({named_placeholders})
+                """
+                result = conn.execute(text(query), params).fetchall()
+
+                if not result:
+                    # No pre-computed metrics found, fall back to real-time calculation
+                    logger.warning("No pre-computed metrics found, falling back to real-time calculation")
+                    df_flat, df_raw = self.get_data_for_selected_marathons_db(marathon_ids)
+                    from data_processing import process_queried_data_for_report
+                    return process_queried_data_for_report(df_flat, df_raw)
+
+                # Aggregate metrics across marathons
+                total_images = sum(row.total_images for row in result)
+                total_shoes = sum(row.total_shoes_detected for row in result)
+                total_persons = sum(row.total_persons_with_demographics for row in result)
+
+                # Combine brand counts from all marathons
+                combined_brand_counts = pd.Series(dtype='int64')
+                combined_gender_dist = pd.DataFrame()
+                combined_race_dist = pd.DataFrame()
+                combined_category_dist = pd.DataFrame()
+                marathon_specific_data = {}
+
+                for row in result:
+                    marathon_name = row.marathon_name
+
+                    # Store individual marathon data for cards
+                    marathon_specific_data[marathon_name] = {
+                        "images_count": row.total_images,
+                        "shoes_count": row.total_shoes_detected,
+                        "persons_count": row.total_persons_with_demographics
+                    }
+
+                    # Combine brand counts
+                    if row.brand_counts_json and row.brand_counts_json != '{}':
+                        import json
+                        brand_counts_dict = json.loads(row.brand_counts_json)
+                        brand_counts = pd.Series(brand_counts_dict, dtype='int64')
+                        combined_brand_counts = combined_brand_counts.add(brand_counts, fill_value=0)
+
+                    # Combine gender distribution
+                    if row.gender_distribution_json and row.gender_distribution_json != '{}':
+                        gender_dist = pd.read_json(row.gender_distribution_json)
+                        if combined_gender_dist.empty:
+                            combined_gender_dist = gender_dist
+                        else:
+                            combined_gender_dist = combined_gender_dist.add(gender_dist, fill_value=0)
+
+                    # Combine race distribution
+                    if row.race_distribution_json and row.race_distribution_json != '{}':
+                        race_dist = pd.read_json(row.race_distribution_json)
+                        if combined_race_dist.empty:
+                            combined_race_dist = race_dist
+                        else:
+                            combined_race_dist = combined_race_dist.add(race_dist, fill_value=0)
+
+                    # Combine category distribution
+                    if row.category_distribution_json and row.category_distribution_json != '{}':
+                        category_dist = pd.read_json(row.category_distribution_json)
+                        if combined_category_dist.empty:
+                            combined_category_dist = category_dist
+                        else:
+                            combined_category_dist = combined_category_dist.add(category_dist, fill_value=0)
+
+                # Calculate leader brand from combined data
+                leader_name = "N/A"
+                leader_count = 0
+                leader_percentage = 0.0
+                unique_brands = len(combined_brand_counts)
+
+                if not combined_brand_counts.empty:
+                    leader_name = combined_brand_counts.idxmax()
+                    leader_count = int(combined_brand_counts.max())
+                    leader_percentage = (leader_count / total_shoes * 100) if total_shoes > 0 else 0.0
+
+                # Create top brands table
+                top_brands_df = pd.DataFrame()
+                if not combined_brand_counts.empty:
+                    top_n = 10
+                    top_brands_series = combined_brand_counts.head(top_n)
+                    top_brands_df = pd.DataFrame({
+                        'Marca': top_brands_series.index,
+                        'Count': top_brands_series.values.astype(int)
+                    })
+                    top_brands_df['#'] = range(1, len(top_brands_df) + 1)
+                    top_brands_df['Participação (%)'] = (top_brands_df['Count'] / total_shoes * 100).round(1) if total_shoes > 0 else 0.0
+                    max_count = top_brands_df['Count'].max()
+                    if pd.isna(max_count) or max_count == 0:
+                        max_count = 1
+                    top_brands_df['Gráfico'] = top_brands_df['Count'].apply(
+                        lambda x: "█" * int(round((x / max_count) * 10)) if max_count > 0 and pd.notna(x) else ""
+                    )
+                    top_brands_df = top_brands_df[['#', 'Marca', 'Count', 'Participação (%)', 'Gráfico']]
+
+                # Return combined metrics in the same format as process_queried_data_for_report
+                return {
+                    "total_images_selected": total_images,
+                    "total_shoes_detected": total_shoes,
+                    "unique_brands_count": unique_brands,
+                    "brand_counts_all_selected": combined_brand_counts,
+                    "top_brands_all_selected": top_brands_df,
+                    "persons_analyzed_count": total_persons,
+                    "leader_brand_info": {
+                        "name": leader_name,
+                        "count": leader_count,
+                        "percentage": leader_percentage
+                    },
+                    "gender_brand_distribution": combined_gender_dist,
+                    "race_brand_distribution": combined_race_dist,
+                    "brand_counts_by_marathon": pd.DataFrame(),  # Not pre-computed for now
+                    "brand_counts_by_category": combined_category_dist,
+                    "total_persons_by_marathon": pd.Series(dtype='int'),
+                    "marathon_specific_data_for_cards": marathon_specific_data,
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get precomputed marathon metrics: {e}")
+            # Fall back to real-time calculation
+            df_flat, df_raw = self.get_data_for_selected_marathons_db(marathon_ids)
+            from data_processing import process_queried_data_for_report
+            return process_queried_data_for_report(df_flat, df_raw)
+
+    def get_individual_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Dict[str, Any]]:
+        """Retrieve pre-computed metrics for individual marathons efficiently."""
+        if not marathon_ids:
+            return {}
+
+        try:
+            with self.get_connection() as conn:
+                # Use execute_query method for simpler parameter handling
+                params = {f'param_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids)}
+                named_placeholders = ','.join([f':param_{i}' for i in range(len(marathon_ids))])
+                query = f"""
+                    SELECT m.name as marathon_name, met.*
+                    FROM marathon_metrics met
+                    JOIN marathons m ON met.marathon_id = m.marathon_id
+                    WHERE met.marathon_id IN ({named_placeholders})
+                """
+                result = conn.execute(text(query), params).fetchall()
+
+                if not result:
+                    # No pre-computed metrics found, fall back to real-time calculation
+                    logger.warning("No pre-computed metrics found, falling back to real-time calculation")
+                    individual_results = {}
+                    for marathon_id in marathon_ids:
+                        df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
+                        from data_processing import process_queried_data_for_report
+                        marathon_list = self.get_marathon_list_from_db()
+                        marathon_name = next((m['name'] for m in marathon_list if m['id'] == marathon_id), f"Marathon_{marathon_id}")
+                        individual_results[marathon_name] = process_queried_data_for_report(df_flat, df_raw)
+                    return individual_results
+
+                # Process each marathon individually
+                individual_results = {}
+
+                for row in result:
+                    marathon_name = row.marathon_name
+
+                    # Parse individual marathon data
+                    brand_counts = pd.Series(dtype='int64')
+                    if row.brand_counts_json and row.brand_counts_json != '{}':
+                        import json
+                        brand_counts_dict = json.loads(row.brand_counts_json)
+                        brand_counts = pd.Series(brand_counts_dict, dtype='int64')
+
+                    gender_dist = pd.DataFrame()
+                    if row.gender_distribution_json and row.gender_distribution_json != '{}':
+                        gender_dist = pd.read_json(row.gender_distribution_json)
+
+                    race_dist = pd.DataFrame()
+                    if row.race_distribution_json and row.race_distribution_json != '{}':
+                        race_dist = pd.read_json(row.race_distribution_json)
+
+                    category_dist = pd.DataFrame()
+                    if row.category_distribution_json and row.category_distribution_json != '{}':
+                        category_dist = pd.read_json(row.category_distribution_json)
+
+                    # Create top brands table for this marathon
+                    top_brands_df = pd.DataFrame()
+                    if not brand_counts.empty:
+                        top_n = 10
+                        top_brands_series = brand_counts.head(top_n)
+                        top_brands_df = pd.DataFrame({
+                            'Marca': top_brands_series.index,
+                            'Count': top_brands_series.values.astype(int)
+                        })
+                        top_brands_df['#'] = range(1, len(top_brands_df) + 1)
+                        total_shoes = row.total_shoes_detected
+                        top_brands_df['Participação (%)'] = (top_brands_df['Count'] / total_shoes * 100).round(1) if total_shoes > 0 else 0.0
+                        max_count = top_brands_df['Count'].max()
+                        if pd.isna(max_count) or max_count == 0:
+                            max_count = 1
+                        top_brands_df['Gráfico'] = top_brands_df['Count'].apply(
+                            lambda x: "█" * int(round((x / max_count) * 10)) if max_count > 0 and pd.notna(x) else ""
+                        )
+                        top_brands_df = top_brands_df[['#', 'Marca', 'Count', 'Participação (%)', 'Gráfico']]
+
+                    # Store individual marathon data
+                    individual_results[marathon_name] = {
+                        "total_images_selected": row.total_images,
+                        "total_shoes_detected": row.total_shoes_detected,
+                        "unique_brands_count": row.unique_brands_count,
+                        "brand_counts_all_selected": brand_counts,
+                        "top_brands_all_selected": top_brands_df,
+                        "persons_analyzed_count": row.total_persons_with_demographics,
+                        "leader_brand_info": {
+                            "name": row.leader_brand_name or "N/A",
+                            "count": row.leader_brand_count or 0,
+                            "percentage": row.leader_brand_percentage or 0.0
+                        },
+                        "gender_brand_distribution": gender_dist,
+                        "race_brand_distribution": race_dist,
+                        "brand_counts_by_category": category_dist,
+                        "brand_counts_by_marathon": pd.DataFrame(),  # Not needed for individual
+                        "total_persons_by_marathon": pd.Series(dtype='int'),
+                        "marathon_specific_data_for_cards": {
+                            marathon_name: {
+                                "images_count": row.total_images,
+                                "shoes_count": row.total_shoes_detected,
+                                "persons_count": row.total_persons_with_demographics
+                            }
+                        },
+                    }
+
+                return individual_results
+
+        except Exception as e:
+            logger.error(f"Failed to get individual marathon metrics: {e}")
+            # Fall back to real-time calculation
+            individual_results = {}
+            for marathon_id in marathon_ids:
+                df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
+                from data_processing import process_queried_data_for_report
+                marathon_list = self.get_marathon_list_from_db()
+                marathon_name = next((m['name'] for m in marathon_list if m['id'] == marathon_id), f"Marathon_{marathon_id}")
+                individual_results[marathon_name] = process_queried_data_for_report(df_flat, df_raw)
+            return individual_results
+
 
 # Global database manager instance
 try:
@@ -324,15 +669,31 @@ except Exception as e:
     logger.error(f"Failed to initialize database manager: {e}")
     db = None
 
-# Convenience functions for backward compatibility
-def get_db_connection():
-    """Legacy function for backward compatibility."""
-    if db is None:
-        raise RuntimeError("Database manager not initialized")
-    return db.get_connection()
 
-def create_tables():
-    """Legacy function for backward compatibility."""
+# Convenience functions for backward compatibility
+def get_marathon_list_from_db():
+    """Backward compatibility function."""
     if db is None:
-        raise RuntimeError("Database manager not initialized") 
-    return db.create_tables()
+        return []
+    return db.get_marathon_list_from_db()
+
+
+def get_data_for_selected_marathons_db(marathon_ids_list):
+    """Backward compatibility function."""
+    if db is None:
+        return pd.DataFrame(), pd.DataFrame()
+    return db.get_data_for_selected_marathons_db(marathon_ids_list)
+
+
+def get_precomputed_marathon_metrics(marathon_ids):
+    """Backward compatibility function."""
+    if db is None:
+        return {"total_images_selected": 0, "total_shoes_detected": 0}
+    return db.get_precomputed_marathon_metrics(marathon_ids)
+
+
+def get_individual_marathon_metrics(marathon_ids):
+    """Backward compatibility function."""
+    if db is None:
+        return {}
+    return db.get_individual_marathon_metrics(marathon_ids)

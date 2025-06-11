@@ -165,7 +165,7 @@ def process_multiple_marathons_efficiently(marathon_ids_list):
         return empty_data, {}
     
     # Get all data in one call
-    from database import get_data_for_selected_marathons_db
+    from database_abstraction import get_data_for_selected_marathons_db
     df_flat_all, df_raw_all = get_data_for_selected_marathons_db(marathon_ids_list)
     
     # Process combined data
