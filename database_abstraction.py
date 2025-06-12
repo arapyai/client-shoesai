@@ -627,9 +627,9 @@ class DatabaseManager:
                 # Process gender distribution
                 gender_data = {}
                 for row in gender_results:
-                    if row.gender_label not in gender_data:
-                        gender_data[row.gender_label] = {}
-                    gender_data[row.gender_label][row.brand] = row.count
+                    if row.brand not in gender_data:
+                        gender_data[row.brand] = {}
+                    gender_data[row.brand][row.gender_label] = row.count
                 
                 # 6. Get race distribution  
                 race_stmt = select(
@@ -653,9 +653,9 @@ class DatabaseManager:
                 # Process race distribution
                 race_data = {}
                 for row in race_results:
-                    if row.race_label not in race_data:
-                        race_data[row.race_label] = {}
-                    race_data[row.race_label][row.brand] = row.count
+                    if row.brand not in race_data:
+                        race_data[row.brand] = {}
+                    race_data[row.brand][row.race_label] = row.count
                 
                 # 7. Get category distribution
                 category_stmt = select(
@@ -678,8 +678,8 @@ class DatabaseManager:
                 category_data = {}
                 for row in category_results:
                     if row.category not in category_data:
-                        category_data[row.category] = {}
-                    category_data[row.category][row.brand] = row.count
+                        category_data[row.brand] = {}
+                    category_data[row.brand][row.category] = row.count
                 
                 # Create top brands list
                 top_brands_list = []
