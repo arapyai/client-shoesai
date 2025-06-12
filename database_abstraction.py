@@ -552,152 +552,165 @@ class DatabaseManager:
 
     def calculate_and_store_marathon_metrics(self, marathon_id: int) -> None:
         """
-        Calculate and store pre-computed metrics for a marathon.
-        This function should be called after importing marathon data.
+        Calculate and store pre-computed metrics for a marathon using separate queries to avoid double-counting.
         """
         try:
             logger.info(f"Starting metrics calculation for marathon {marathon_id}")
             
-            # Get all data for this marathon directly (this will show if data exists)
-            df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
-            
-            logger.info(f"Retrieved DataFrames - df_flat shape: {df_flat.shape}, df_raw shape: {df_raw.shape}")
-            
-            # Debug: Log actual data counts from the DataFrames
-            if not df_flat.empty:
-                images_count = df_flat['image_id'].nunique() if 'image_id' in df_flat.columns else 0
-                shoes_count = df_flat[df_flat['shoe_brand'].notna()]['shoe_brand'].count() if 'shoe_brand' in df_flat.columns else 0
-                demographics_count = df_flat[df_flat['person_gender'].notna()]['person_gender'].count() if 'person_gender' in df_flat.columns else 0
-                logger.info(f"From DataFrame: {images_count} images, {shoes_count} shoes, {demographics_count} demographics")
-            
-            if df_flat.empty and df_raw.empty:
-                logger.warning(f"No data found for marathon {marathon_id}, storing empty metrics")
-                # Store empty metrics
+            with self.get_connection() as conn:
+                # 1. Count images directly
+                images_query = """
+                    SELECT COUNT(DISTINCT i.image_id) as total_images
+                    FROM images i 
+                    WHERE i.marathon_id = :marathon_id
+                """
+                images_result = conn.execute(text(images_query), {"marathon_id": marathon_id}).fetchone()
+                total_images = images_result.total_images if images_result else 0
+                
+                # 2. Count shoes directly  
+                shoes_query = """
+                    SELECT COUNT(s.detection_id) as total_shoes
+                    FROM shoe_detections s
+                    JOIN images i ON s.image_id = i.image_id
+                    WHERE i.marathon_id = :marathon_id
+                """
+                shoes_result = conn.execute(text(shoes_query), {"marathon_id": marathon_id}).fetchone()
+                total_shoes = shoes_result.total_shoes if shoes_result else 0
+                
+                # 3. Count persons with demographics directly
+                demographics_query = """
+                    SELECT COUNT(p.demographic_id) as total_persons
+                    FROM person_demographics p
+                    JOIN images i ON p.image_id = i.image_id  
+                    WHERE i.marathon_id = :marathon_id
+                """
+                demographics_result = conn.execute(text(demographics_query), {"marathon_id": marathon_id}).fetchone()
+                total_persons = demographics_result.total_persons if demographics_result else 0
+                
+                # 4. Get brand counts directly
+                brand_counts_query = """
+                    SELECT s.brand, COUNT(*) as count
+                    FROM shoe_detections s
+                    JOIN images i ON s.image_id = i.image_id
+                    WHERE i.marathon_id = :marathon_id 
+                    AND s.brand IS NOT NULL
+                    GROUP BY s.brand
+                    ORDER BY count DESC
+                """
+                brand_results = conn.execute(text(brand_counts_query), {"marathon_id": marathon_id}).fetchall()
+                
+                # Process brand counts
+                brand_counts_dict = {row.brand: row.count for row in brand_results}
+                unique_brands = len(brand_counts_dict)
+                
+                # Calculate leader brand
+                leader_name = "N/A"
+                leader_count = 0
+                leader_percentage = 0.0
+                
+                if brand_counts_dict:
+                    leader_name = max(brand_counts_dict, key=brand_counts_dict.get)
+                    leader_count = brand_counts_dict[leader_name]
+                    leader_percentage = (leader_count / total_shoes * 100) if total_shoes > 0 else 0.0
+                
+                # 5. Get gender distribution
+                gender_query = """
+                    SELECT p.gender_label, s.brand, COUNT(*) as count
+                    FROM person_demographics p
+                    JOIN images i ON p.image_id = i.image_id
+                    JOIN shoe_detections s ON i.image_id = s.image_id
+                    WHERE i.marathon_id = :marathon_id 
+                    AND p.gender_label IS NOT NULL 
+                    AND s.brand IS NOT NULL
+                    GROUP BY p.gender_label, s.brand
+                """
+                gender_results = conn.execute(text(gender_query), {"marathon_id": marathon_id}).fetchall()
+                
+                # Process gender distribution
+                gender_data = {}
+                for row in gender_results:
+                    if row.gender_label not in gender_data:
+                        gender_data[row.gender_label] = {}
+                    gender_data[row.gender_label][row.brand] = row.count
+                
+                # 6. Get race distribution  
+                race_query = """
+                    SELECT p.race_label, s.brand, COUNT(*) as count
+                    FROM person_demographics p
+                    JOIN images i ON p.image_id = i.image_id
+                    JOIN shoe_detections s ON i.image_id = s.image_id
+                    WHERE i.marathon_id = :marathon_id 
+                    AND p.race_label IS NOT NULL 
+                    AND s.brand IS NOT NULL
+                    GROUP BY p.race_label, s.brand
+                """
+                race_results = conn.execute(text(race_query), {"marathon_id": marathon_id}).fetchall()
+                
+                # Process race distribution
+                race_data = {}
+                for row in race_results:
+                    if row.race_label not in race_data:
+                        race_data[row.race_label] = {}
+                    race_data[row.race_label][row.brand] = row.count
+                
+                # 7. Get category distribution
+                category_query = """
+                    SELECT i.category, s.brand, COUNT(*) as count
+                    FROM images i
+                    JOIN shoe_detections s ON i.image_id = s.image_id
+                    WHERE i.marathon_id = :marathon_id 
+                    AND i.category IS NOT NULL 
+                    AND s.brand IS NOT NULL
+                    GROUP BY i.category, s.brand
+                """
+                category_results = conn.execute(text(category_query), {"marathon_id": marathon_id}).fetchall()
+                
+                # Process category distribution
+                category_data = {}
+                for row in category_results:
+                    if row.category not in category_data:
+                        category_data[row.category] = {}
+                    category_data[row.category][row.brand] = row.count
+                
+                # Create top brands list
+                top_brands_list = []
+                for i, (brand, count) in enumerate(sorted(brand_counts_dict.items(), key=lambda x: x[1], reverse=True)[:10], 1):
+                    percentage = (count / total_shoes * 100) if total_shoes > 0 else 0.0
+                    top_brands_list.append({
+                        '#': i,
+                        'Marca': brand,
+                        'Count': count,
+                        'Participação (%)': round(percentage, 1)
+                    })
+                
+                logger.info(f"Calculated metrics: images={total_images}, shoes={total_shoes}, persons={total_persons}, brands={unique_brands}")
+                
+                # Store the metrics
                 stmt = insert(self.marathon_metrics).values(
                     marathon_id=marathon_id,
-                    total_images=0,
-                    total_shoes_detected=0,
-                    total_persons_with_demographics=0,
-                    unique_brands_count=0,
-                    leader_brand_name='N/A',
-                    leader_brand_count=0,
-                    leader_brand_percentage=0.0,
-                    brand_counts_json='{}',
-                    gender_distribution_json='{}',
-                    race_distribution_json='{}',
-                    category_distribution_json='{}',
-                    top_brands_json='[]'
+                    total_images=total_images,
+                    total_shoes_detected=total_shoes,
+                    total_persons_with_demographics=total_persons,
+                    unique_brands_count=unique_brands,
+                    leader_brand_name=leader_name,
+                    leader_brand_count=leader_count,
+                    leader_brand_percentage=leader_percentage,
+                    brand_counts_json=json.dumps(brand_counts_dict),
+                    gender_distribution_json=json.dumps(gender_data),
+                    race_distribution_json=json.dumps(race_data),
+                    category_distribution_json=json.dumps(category_data),
+                    top_brands_json=json.dumps(top_brands_list),
+                    last_calculated=datetime.now()
                 )
-                with self.get_connection() as conn:
-                    delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
-                    conn.execute(delete_existing)
-                    conn.execute(stmt)
-                    conn.commit()
-                return
-            
-            # Import the processing function
-            try:
-                from data_processing import process_queried_data_for_report
-                logger.info("Successfully imported process_queried_data_for_report")
-            except ImportError as ie:
-                logger.error(f"Failed to import data_processing module: {ie}")
-                return
-            
-            # Calculate metrics using existing function
-            logger.info("Calling process_queried_data_for_report...")
-            metrics = process_queried_data_for_report(df_flat, df_raw)
-            logger.info(f"Metrics calculation completed. Keys: {list(metrics.keys())}")
-            
-            # Extract key metrics with better error handling
-            total_images = metrics.get("total_images_selected", 0)
-            total_shoes = metrics.get("total_shoes_detected", 0)
-            total_persons = metrics.get("persons_analyzed_count", 0)
-            unique_brands = metrics.get("unique_brands_count", 0)
-            
-            logger.info(f"Extracted metrics: images={total_images}, shoes={total_shoes}, persons={total_persons}, brands={unique_brands}")
-            
-            leader_info = metrics.get("leader_brand_info", {})
-            leader_name = leader_info.get("name", "N/A")
-            leader_count = leader_info.get("count", 0)
-            leader_percentage = leader_info.get("percentage", 0.0)
-            
-            # Convert complex data to JSON strings with better error handling
-            try:
-                brand_counts_all = metrics.get("brand_counts_all_selected", pd.Series())
-                brand_counts_json = "{}"
-                if isinstance(brand_counts_all, pd.Series) and not brand_counts_all.empty:
-                    brand_counts_json = brand_counts_all.to_json()
-                elif isinstance(brand_counts_all, dict) and brand_counts_all:
-                    brand_counts_json = json.dumps(brand_counts_all)
                 
-                gender_dist_json = "{}"
-                gender_dist = metrics.get("gender_brand_distribution", pd.DataFrame())
-                if isinstance(gender_dist, pd.DataFrame) and not gender_dist.empty:
-                    gender_dist_json = gender_dist.to_json()
-                
-                race_dist_json = "{}"
-                race_dist = metrics.get("race_brand_distribution", pd.DataFrame())
-                if isinstance(race_dist, pd.DataFrame) and not race_dist.empty:
-                    race_dist_json = race_dist.to_json()
-                
-                category_dist_json = "{}"
-                category_dist = metrics.get("brand_counts_by_category", pd.DataFrame())
-                if isinstance(category_dist, pd.DataFrame) and not category_dist.empty:
-                    category_dist_json = category_dist.to_json()
-                
-                top_brands_json = "[]"
-                top_brands = metrics.get("top_brands_all_selected", pd.DataFrame())
-                if isinstance(top_brands, pd.DataFrame) and not top_brands.empty:
-                    top_brands_json = top_brands.to_json(orient='records')
-                    
-            except Exception as json_error:
-                logger.error(f"Error converting metrics to JSON: {json_error}")
-                # Use default values if conversion fails
-                brand_counts_json = "{}"
-                gender_dist_json = "{}"
-                race_dist_json = "{}"
-                category_dist_json = "{}"
-                top_brands_json = "[]"
-            
-            logger.info(f"Final metrics to store: images={total_images}, shoes={total_shoes}, persons={total_persons}")
-            
-            # Store calculated metrics
-            stmt = insert(self.marathon_metrics).values(
-                marathon_id=marathon_id,
-                total_images=total_images,
-                total_shoes_detected=total_shoes,
-                total_persons_with_demographics=total_persons,
-                unique_brands_count=unique_brands,
-                leader_brand_name=leader_name,
-                leader_brand_count=leader_count,
-                leader_brand_percentage=leader_percentage,
-                brand_counts_json=brand_counts_json,
-                gender_distribution_json=gender_dist_json,
-                race_distribution_json=race_dist_json,
-                category_distribution_json=category_dist_json,
-                top_brands_json=top_brands_json,
-                last_calculated=datetime.now()
-            )
-            
-            with self.get_connection() as conn:
-                # First try to delete existing metrics
+                # Delete existing and insert new
                 delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
                 conn.execute(delete_existing)
-                # Then insert new metrics
                 conn.execute(stmt)
                 conn.commit()
                 
-            logger.info(f"Successfully calculated and stored metrics for marathon {marathon_id}")
-            
-            # Verify the stored data
-            with self.get_connection() as conn:
-                verify_stmt = select(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
-                stored_metrics = conn.execute(verify_stmt).fetchone()
-                if stored_metrics:
-                    logger.info(f"Verified stored metrics: images={stored_metrics.total_images}, shoes={stored_metrics.total_shoes_detected}")
-                else:
-                    logger.error("Failed to verify stored metrics - no record found")
-            
+                logger.info(f"Successfully stored metrics for marathon {marathon_id}")
+                
         except Exception as e:
             logger.error(f"Error calculating metrics for marathon {marathon_id}: {e}")
             import traceback
