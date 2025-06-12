@@ -12,7 +12,7 @@ O repositório contém:
 - Diretório `pages` – páginas de relatório, sobre a plataforma, importador de dados e perfil.
 - `database_abstraction.py` – camada de abstração de banco de dados utilizando SQLAlchemy, compatível com SQLite, PostgreSQL e MySQL.
 - `data_processing.py` – processamento de métricas a partir dos dados armazenados.
-- `manage_users.py` – script utilitário para criar usuários via linha de comando.
+- `manage_db.py` – utilitário de linha de comando para gerenciar usuários e provas.
 
 ## Requisitos
 
@@ -32,7 +32,7 @@ pip install -r requirements.txt
 4. Gere um usuário inicial:
 
 ```bash
-python manage_users.py add --email usuario@exemplo.com --password senha123
+python manage_db.py user add --email usuario@exemplo.com --password senha123
 ```
 
 5. Inicie a aplicação:
