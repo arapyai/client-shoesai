@@ -1,11 +1,9 @@
 import streamlit as st
+from ui_components import check_auth
 
 st.set_page_config(layout="wide", page_title="Shoes AI - Sobre")
 
-if not st.session_state.get("logged_in", False):
-    st.warning("Por favor, faça login para acessar esta página.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
+user_id = check_auth()
 
 # Import the page header component
 from ui_components import page_header_with_logout

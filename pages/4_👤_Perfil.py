@@ -3,20 +3,11 @@ import re
 from ui_components import page_header_with_logout
 from database_abstraction import db, hasher
 from sqlalchemy import text
-
+from ui_components import check_auth
 # --- Page Config ---
 st.set_page_config(layout="wide", page_title="Shoes AI - Perfil do Usuário")
 
-# --- Authentication Check ---
-if not st.session_state.get("logged_in", False):
-    st.warning("Por favor, faça login para acessar esta página.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
-
-if "user_info" not in st.session_state or not st.session_state.user_info.get("user_id"):
-    st.error("Informações do usuário não encontradas. Por favor, faça login novamente.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
+user_id = check_auth(admin_only=True)
 
 # Display page header with logout button
 page_header_with_logout("👤 Perfil do Usuário", 

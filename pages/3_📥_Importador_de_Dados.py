@@ -2,27 +2,11 @@ import streamlit as st
 import json
 import pandas as pd
 from database_abstraction import db
-
+from ui_components import check_auth
 st.set_page_config(layout="wide", page_title="Shoes AI - Importador")
 
-# --- Authentication Check ---
-if not st.session_state.get("logged_in", False):
-    st.warning("Por favor, faça login para acessar esta página.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
 
-#Only if user is admin in user_admin["is_admin"] field
-if not st.session_state.get("user_info", {}).get("is_admin", False):
-    st.error("Acesso negado. Esta página é restrita a administradores.")
-    st.link_button("Ir para Relatório", "/pages/1_%F0%9F%93%A5_Relat%C3%B3rio.py")
-    st.stop()
-
-if "user_info" not in st.session_state or not st.session_state.user_info.get("user_id"):
-    st.error("Informações do usuário não encontradas. Por favor, faça login novamente.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
-
-user_id = st.session_state.user_info["user_id"]
+user_id = check_auth(admin_only=True)
 
 # Import the page header component
 from ui_components import page_header_with_logout
@@ -44,7 +28,7 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
     uploaded_file = st.file_uploader("Escolha um arquivo JSON com os dados da prova*", type=["json"], key="json_uploader")
 
     submitted_import = st.form_submit_button("Importar Dados da Prova")
-
+        
     if submitted_import:
         if not marathon_name:
             st.error("O nome da prova é obrigatório.")
@@ -53,21 +37,6 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
         else:
             progress_bar = st.progress(0, text="Iniciando importação...")
             try:
-                # Forgiving JSON loading for files that might not be perfectly UTF-8
-                try:
-                    json_content = uploaded_file.read().decode('utf-8-sig') # Try utf-8-sig first for BOM
-                except UnicodeDecodeError:
-                    uploaded_file.seek(0) # Reset file pointer
-                    json_content = uploaded_file.read().decode('latin-1') # Fallback
-
-                json_data_raw = json.loads(json_content)
-                
-                # The JSON is a dict of dicts, needs to be list of dicts
-                # Example: {'col1': {'0':'a', '1':'b'}, 'col2': {'0':1, '1':2}}
-                # to [{'col1':'a', 'col2':1}, {'col1':'b', 'col2':2}]
-                df_temp = pd.DataFrame(json_data_raw)
-                image_data_list_for_db = df_temp.to_dict(orient='records')
-
                 progress_bar.progress(10, text="Metadados da prova sendo salvos...")
                 marathon_id = db.add_marathon_metadata(
                     name=marathon_name,
@@ -80,6 +49,20 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
                 )
 
                 if marathon_id:
+                    try:
+                        json_content = uploaded_file.read().decode('utf-8-sig') # Try utf-8-sig first for BOM
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0) # Reset file pointer
+                        json_content = uploaded_file.read().decode('latin-1') # Fallback
+
+                    json_data_raw = json.loads(json_content)
+                    
+                    # The JSON is a dict of dicts, needs to be list of dicts
+                    # Example: {'col1': {'0':'a', '1':'b'}, 'col2': {'0':1, '1':2}}
+                    # to [{'col1':'a', 'col2':1}, {'col1':'b', 'col2':2}]
+                    df_temp = pd.DataFrame(json_data_raw)
+                    image_data_list_for_db = df_temp.to_dict(orient='records')
+
                     progress_bar.progress(30, text=f"Metadados salvos (ID: {marathon_id}). Processando imagens...")
                     db.insert_parsed_json_data(marathon_id, image_data_list_for_db) # This function now handles batching internally
                     progress_bar.progress(100, text="Importação concluída!")

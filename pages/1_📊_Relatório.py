@@ -11,7 +11,8 @@ from ui_components import (
     render_top_brands_table,
     render_race_by_brand,
     render_marathon_comparison_chart,
-    render_individual_marathon_column
+    render_individual_marathon_column,
+    check_auth
 )
 from database_abstraction import get_marathon_list_from_db, get_data_for_selected_marathons_db
 
@@ -19,10 +20,7 @@ from database_abstraction import get_marathon_list_from_db, get_data_for_selecte
 st.set_page_config(layout="wide", page_title="Shoes AI - Relatórios")
 
 # --- Authentication Check ---
-if not st.session_state.get("logged_in", False):
-    st.warning("Por favor, faça login para acessar esta página.")
-    st.link_button("Ir para Login", "/")
-    st.stop()
+user_id = check_auth()
 
 # --- Fetch Marathon List from DB for Selector ---
 @st.cache_data # Cache the list of marathons

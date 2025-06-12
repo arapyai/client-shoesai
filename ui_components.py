@@ -7,6 +7,29 @@ from typing import Optional, List, Dict, Any
 
 # --- Utility Functions ---
 
+def check_auth(admin_only=False):
+    """Check authentication and return user_id if successful."""
+    # Check if user is logged in
+    if not st.session_state.get("logged_in", False):
+        st.warning("Por favor, faça login para acessar esta página.")
+        if st.button("Ir para Login"):
+            st.switch_page("app.py")
+        st.stop()
+    
+    # Check admin access if required
+    if admin_only and not st.session_state.get("user_info", {}).get("is_admin", False):
+        st.error("Acesso negado. Esta página é restrita a administradores.")
+        st.stop()
+    
+    # Check if user info exists
+    if "user_info" not in st.session_state or not st.session_state.user_info.get("user_id"):
+        st.error("Informações do usuário não encontradas. Por favor, faça login novamente.")
+        if st.button("Ir para Login"):
+            st.switch_page("app.py")
+        st.stop()
+    
+    return st.session_state.user_info["user_id"]
+
 def create_column_grid(num_items: int, items_per_row: int) -> List[Any]:
     """
     Creates a grid of Streamlit columns and returns them as a flat list.
