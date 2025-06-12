@@ -703,96 +703,6 @@ class DatabaseManager:
             import traceback
             logger.error(traceback.format_exc())
 
-    def get_marathon_list_from_db(self) -> List[Dict]:
-        """Get list of all marathons from the database."""
-        try:
-            with self.get_connection() as conn:
-                stmt = select(
-                    self.marathons.c.marathon_id,
-                    self.marathons.c.name,
-                    self.marathons.c.event_date,
-                    self.marathons.c.location,
-                    self.marathons.c.distance_km,
-                    self.marathons.c.description
-                ).order_by(self.marathons.c.event_date.desc(), self.marathons.c.name.asc())
-                result = conn.execute(stmt).fetchall()
-                
-                return [
-                    {
-                        "id": row.marathon_id,
-                        "name": row.name,
-                        "event_date": row.event_date,
-                        "location": row.location,
-                        "distance_km": row.distance_km,
-                        "description": row.description
-                    }
-                    for row in result
-                ]
-        except Exception as e:
-            logger.error(f"Failed to get marathon list: {e}")
-            return []
-
-    def get_data_for_selected_marathons_db(self, marathon_ids_list: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Get data for selected marathons from the database."""
-        if not marathon_ids_list:
-            return pd.DataFrame(), pd.DataFrame()
-
-        try:
-            with self.get_connection() as conn:
-                # Use SQLAlchemy's text() with named parameters for PostgreSQL compatibility
-                from sqlalchemy import text
-                
-                # Create named parameters for the IN clause
-                params = {f'marathon_id_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids_list)}
-                named_placeholders = ','.join([f':marathon_id_{i}' for i in range(len(marathon_ids_list))])
-
-                # Query for flattened data (shoe & demographic per image)
-                query_flat = f"""
-                    SELECT
-                        m.marathon_id,
-                        m.name as marathon_name,
-                        i.image_id,
-                        i.filename,
-                        i.category,
-                        s.brand as shoe_brand,
-                        s.probability as shoe_prob,
-                        s.confidence as shoe_confidence,
-                        p.gender_label as person_gender,
-                        p.age_label as person_age,
-                        p.race_label as person_race
-                    FROM marathons m
-                    JOIN images i ON m.marathon_id = i.marathon_id
-                    LEFT JOIN shoe_detections s ON i.image_id = s.image_id
-                    LEFT JOIN person_demographics p ON i.image_id = p.image_id
-                    WHERE m.marathon_id IN ({named_placeholders})
-                """
-                logger.info(f"Executing query for flattened data: {query_flat} with params {params}")
-                # Execute with named parameters
-                result_flat = conn.execute(text(query_flat), params)
-                df_flat_selected = pd.DataFrame(result_flat.fetchall(), columns=result_flat.keys())
-                logger.info(f"Retrieved {len(df_flat_selected)} rows of flattened data")
-                # Query for raw-like structure for counts
-                query_raw_reconstructed = f"""
-                    SELECT 
-                        m.marathon_id,
-                        m.name as marathon_name,
-                        i.filename,
-                        i.category,
-                        i.original_width,
-                        i.original_height,
-                        (SELECT COUNT(*) FROM person_demographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics
-                    FROM marathons m
-                    JOIN images i ON m.marathon_id = i.marathon_id
-                    WHERE m.marathon_id IN ({named_placeholders})
-                """
-                
-                result_raw = conn.execute(text(query_raw_reconstructed), params)
-                df_raw_reconstructed_for_counts = pd.DataFrame(result_raw.fetchall(), columns=result_raw.keys())
-
-                return df_flat_selected, df_raw_reconstructed_for_counts
-        except Exception as e:
-            logger.error(f"Failed to get data for selected marathons: {e}")
-            return pd.DataFrame(), pd.DataFrame()
 
     def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
         """Retrieve pre-computed metrics for selected marathons."""
@@ -1045,7 +955,96 @@ class DatabaseManager:
                 individual_results[marathon_name] = process_queried_data_for_report(df_flat, df_raw)
             return individual_results
 
+    def get_marathon_list_from_db(self) -> List[Dict]:
+        """Get list of all marathons from the database."""
+        try:
+            with self.get_connection() as conn:
+                stmt = select(
+                    self.marathons.c.marathon_id,
+                    self.marathons.c.name,
+                    self.marathons.c.event_date,
+                    self.marathons.c.location,
+                    self.marathons.c.distance_km,
+                    self.marathons.c.description
+                ).order_by(self.marathons.c.event_date.desc(), self.marathons.c.name.asc())
+                result = conn.execute(stmt).fetchall()
+                
+                return [
+                    {
+                        "id": row.marathon_id,
+                        "name": row.name,
+                        "event_date": row.event_date,
+                        "location": row.location,
+                        "distance_km": row.distance_km,
+                        "description": row.description
+                    }
+                    for row in result
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get marathon list: {e}")
+            return []
 
+    def get_data_for_selected_marathons_db(self, marathon_ids_list: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Get data for selected marathons from the database."""
+        if not marathon_ids_list:
+            return pd.DataFrame(), pd.DataFrame()
+
+        try:
+            with self.get_connection() as conn:
+                # Use SQLAlchemy's text() with named parameters for PostgreSQL compatibility
+                from sqlalchemy import text
+                
+                # Create named parameters for the IN clause
+                params = {f'marathon_id_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids_list)}
+                named_placeholders = ','.join([f':marathon_id_{i}' for i in range(len(marathon_ids_list))])
+
+                # Query for flattened data (shoe & demographic per image)
+                query_flat = f"""
+                    SELECT
+                        m.marathon_id,
+                        m.name as marathon_name,
+                        i.image_id,
+                        i.filename,
+                        i.category,
+                        s.brand as shoe_brand,
+                        s.probability as shoe_prob,
+                        s.confidence as shoe_confidence,
+                        p.gender_label as person_gender,
+                        p.age_label as person_age,
+                        p.race_label as person_race
+                    FROM marathons m
+                    JOIN images i ON m.marathon_id = i.marathon_id
+                    LEFT JOIN shoe_detections s ON i.image_id = s.image_id
+                    LEFT JOIN person_demographics p ON i.image_id = p.image_id
+                    WHERE m.marathon_id IN ({named_placeholders})
+                """
+                logger.info(f"Executing query for flattened data: {query_flat} with params {params}")
+                # Execute with named parameters
+                result_flat = conn.execute(text(query_flat), params)
+                df_flat_selected = pd.DataFrame(result_flat.fetchall(), columns=result_flat.keys())
+                logger.info(f"Retrieved {len(df_flat_selected)} rows of flattened data")
+                # Query for raw-like structure for counts
+                query_raw_reconstructed = f"""
+                    SELECT 
+                        m.marathon_id,
+                        m.name as marathon_name,
+                        i.filename,
+                        i.category,
+                        i.original_width,
+                        i.original_height,
+                        (SELECT COUNT(*) FROM person_demographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics
+                    FROM marathons m
+                    JOIN images i ON m.marathon_id = i.marathon_id
+                    WHERE m.marathon_id IN ({named_placeholders})
+                """
+                
+                result_raw = conn.execute(text(query_raw_reconstructed), params)
+                df_raw_reconstructed_for_counts = pd.DataFrame(result_raw.fetchall(), columns=result_raw.keys())
+
+                return df_flat_selected, df_raw_reconstructed_for_counts
+        except Exception as e:
+            logger.error(f"Failed to get data for selected marathons: {e}")
+            return pd.DataFrame(), pd.DataFrame()
 # Global database manager instance
 try:
     db = DatabaseManager()
