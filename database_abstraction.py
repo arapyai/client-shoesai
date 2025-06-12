@@ -552,52 +552,44 @@ class DatabaseManager:
 
     def calculate_and_store_marathon_metrics(self, marathon_id: int) -> None:
         """
-        Calculate and store pre-computed metrics for a marathon using separate queries to avoid double-counting.
+        Calculate and store pre-computed metrics for a marathon using SQLAlchemy Core.
         """
         try:
             logger.info(f"Starting metrics calculation for marathon {marathon_id}")
             
             with self.get_connection() as conn:
                 # 1. Count images directly
-                images_query = """
-                    SELECT COUNT(DISTINCT i.image_id) as total_images
-                    FROM images i 
-                    WHERE i.marathon_id = :marathon_id
-                """
-                images_result = conn.execute(text(images_query), {"marathon_id": marathon_id}).fetchone()
-                total_images = images_result.total_images if images_result else 0
+                images_stmt = select(func.count(self.images.c.image_id.distinct())).where(
+                    self.images.c.marathon_id == marathon_id
+                )
+                total_images = conn.execute(images_stmt).scalar() or 0
                 
                 # 2. Count shoes directly  
-                shoes_query = """
-                    SELECT COUNT(s.detection_id) as total_shoes
-                    FROM shoe_detections s
-                    JOIN images i ON s.image_id = i.image_id
-                    WHERE i.marathon_id = :marathon_id
-                """
-                shoes_result = conn.execute(text(shoes_query), {"marathon_id": marathon_id}).fetchone()
-                total_shoes = shoes_result.total_shoes if shoes_result else 0
+                shoes_stmt = select(func.count(self.shoe_detections.c.detection_id)).select_from(
+                    self.shoe_detections.join(self.images, self.shoe_detections.c.image_id == self.images.c.image_id)
+                ).where(self.images.c.marathon_id == marathon_id)
+                total_shoes = conn.execute(shoes_stmt).scalar() or 0
                 
                 # 3. Count persons with demographics directly
-                demographics_query = """
-                    SELECT COUNT(p.demographic_id) as total_persons
-                    FROM person_demographics p
-                    JOIN images i ON p.image_id = i.image_id  
-                    WHERE i.marathon_id = :marathon_id
-                """
-                demographics_result = conn.execute(text(demographics_query), {"marathon_id": marathon_id}).fetchone()
-                total_persons = demographics_result.total_persons if demographics_result else 0
+                demographics_stmt = select(func.count(self.person_demographics.c.demographic_id)).select_from(
+                    self.person_demographics.join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
+                ).where(self.images.c.marathon_id == marathon_id)
+                total_persons = conn.execute(demographics_stmt).scalar() or 0
                 
                 # 4. Get brand counts directly
-                brand_counts_query = """
-                    SELECT s.brand, COUNT(*) as count
-                    FROM shoe_detections s
-                    JOIN images i ON s.image_id = i.image_id
-                    WHERE i.marathon_id = :marathon_id 
-                    AND s.brand IS NOT NULL
-                    GROUP BY s.brand
-                    ORDER BY count DESC
-                """
-                brand_results = conn.execute(text(brand_counts_query), {"marathon_id": marathon_id}).fetchall()
+                brand_counts_stmt = select(
+                    self.shoe_detections.c.brand,
+                    func.count().label('count')
+                ).select_from(
+                    self.shoe_detections.join(self.images, self.shoe_detections.c.image_id == self.images.c.image_id)
+                ).where(
+                    and_(
+                        self.images.c.marathon_id == marathon_id,
+                        self.shoe_detections.c.brand.is_not(None)
+                    )
+                ).group_by(self.shoe_detections.c.brand).order_by(func.count().desc())
+                
+                brand_results = conn.execute(brand_counts_stmt).fetchall()
                 
                 # Process brand counts
                 brand_counts_dict = {row.brand: row.count for row in brand_results}
@@ -614,17 +606,23 @@ class DatabaseManager:
                     leader_percentage = (leader_count / total_shoes * 100) if total_shoes > 0 else 0.0
                 
                 # 5. Get gender distribution
-                gender_query = """
-                    SELECT p.gender_label, s.brand, COUNT(*) as count
-                    FROM person_demographics p
-                    JOIN images i ON p.image_id = i.image_id
-                    JOIN shoe_detections s ON i.image_id = s.image_id
-                    WHERE i.marathon_id = :marathon_id 
-                    AND p.gender_label IS NOT NULL 
-                    AND s.brand IS NOT NULL
-                    GROUP BY p.gender_label, s.brand
-                """
-                gender_results = conn.execute(text(gender_query), {"marathon_id": marathon_id}).fetchall()
+                gender_stmt = select(
+                    self.person_demographics.c.gender_label,
+                    self.shoe_detections.c.brand,
+                    func.count().label('count')
+                ).select_from(
+                    self.person_demographics
+                    .join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
+                    .join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
+                ).where(
+                    and_(
+                        self.images.c.marathon_id == marathon_id,
+                        self.person_demographics.c.gender_label.is_not(None),
+                        self.shoe_detections.c.brand.is_not(None)
+                    )
+                ).group_by(self.person_demographics.c.gender_label, self.shoe_detections.c.brand)
+                
+                gender_results = conn.execute(gender_stmt).fetchall()
                 
                 # Process gender distribution
                 gender_data = {}
@@ -634,17 +632,23 @@ class DatabaseManager:
                     gender_data[row.gender_label][row.brand] = row.count
                 
                 # 6. Get race distribution  
-                race_query = """
-                    SELECT p.race_label, s.brand, COUNT(*) as count
-                    FROM person_demographics p
-                    JOIN images i ON p.image_id = i.image_id
-                    JOIN shoe_detections s ON i.image_id = s.image_id
-                    WHERE i.marathon_id = :marathon_id 
-                    AND p.race_label IS NOT NULL 
-                    AND s.brand IS NOT NULL
-                    GROUP BY p.race_label, s.brand
-                """
-                race_results = conn.execute(text(race_query), {"marathon_id": marathon_id}).fetchall()
+                race_stmt = select(
+                    self.person_demographics.c.race_label,
+                    self.shoe_detections.c.brand,
+                    func.count().label('count')
+                ).select_from(
+                    self.person_demographics
+                    .join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
+                    .join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
+                ).where(
+                    and_(
+                        self.images.c.marathon_id == marathon_id,
+                        self.person_demographics.c.race_label.is_not(None),
+                        self.shoe_detections.c.brand.is_not(None)
+                    )
+                ).group_by(self.person_demographics.c.race_label, self.shoe_detections.c.brand)
+                
+                race_results = conn.execute(race_stmt).fetchall()
                 
                 # Process race distribution
                 race_data = {}
@@ -654,16 +658,21 @@ class DatabaseManager:
                     race_data[row.race_label][row.brand] = row.count
                 
                 # 7. Get category distribution
-                category_query = """
-                    SELECT i.category, s.brand, COUNT(*) as count
-                    FROM images i
-                    JOIN shoe_detections s ON i.image_id = s.image_id
-                    WHERE i.marathon_id = :marathon_id 
-                    AND i.category IS NOT NULL 
-                    AND s.brand IS NOT NULL
-                    GROUP BY i.category, s.brand
-                """
-                category_results = conn.execute(text(category_query), {"marathon_id": marathon_id}).fetchall()
+                category_stmt = select(
+                    self.images.c.category,
+                    self.shoe_detections.c.brand,
+                    func.count().label('count')
+                ).select_from(
+                    self.images.join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
+                ).where(
+                    and_(
+                        self.images.c.marathon_id == marathon_id,
+                        self.images.c.category.is_not(None),
+                        self.shoe_detections.c.brand.is_not(None)
+                    )
+                ).group_by(self.images.c.category, self.shoe_detections.c.brand)
+                
+                category_results = conn.execute(category_stmt).fetchall()
                 
                 # Process category distribution
                 category_data = {}
@@ -685,8 +694,15 @@ class DatabaseManager:
                 
                 logger.info(f"Calculated metrics: images={total_images}, shoes={total_shoes}, persons={total_persons}, brands={unique_brands}")
                 
-                # Store the metrics
-                stmt = insert(self.marathon_metrics).values(
+                # Store the metrics using SQLAlchemy
+                # First delete existing metrics
+                delete_stmt = delete(self.marathon_metrics).where(
+                    self.marathon_metrics.c.marathon_id == marathon_id
+                )
+                conn.execute(delete_stmt)
+                
+                # Then insert new metrics
+                insert_stmt = insert(self.marathon_metrics).values(
                     marathon_id=marathon_id,
                     total_images=total_images,
                     total_shoes_detected=total_shoes,
@@ -703,13 +719,20 @@ class DatabaseManager:
                     last_calculated=datetime.now()
                 )
                 
-                # Delete existing and insert new
-                delete_existing = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
-                conn.execute(delete_existing)
-                conn.execute(stmt)
+                conn.execute(insert_stmt)
                 conn.commit()
                 
                 logger.info(f"Successfully stored metrics for marathon {marathon_id}")
+                
+                # Verify the stored data
+                verify_stmt = select(self.marathon_metrics).where(
+                    self.marathon_metrics.c.marathon_id == marathon_id
+                )
+                stored_metrics = conn.execute(verify_stmt).fetchone()
+                if stored_metrics:
+                    logger.info(f"Verified stored metrics: images={stored_metrics.total_images}, shoes={stored_metrics.total_shoes_detected}")
+                else:
+                    logger.error("Failed to verify stored metrics - no record found")
                 
         except Exception as e:
             logger.error(f"Error calculating metrics for marathon {marathon_id}: {e}")
