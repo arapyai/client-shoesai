@@ -6,7 +6,6 @@ Supports SQLite, PostgreSQL, and MySQL.
 
 import json
 import logging
-from tqdm import tqdm
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Union, Tuple
 import pandas as pd
@@ -355,66 +354,94 @@ class DatabaseManager:
             logger.error(f"Failed to add marathon metadata: {e}")
             return None
 
-    def insert_parsed_json_data(self, marathon_id: int, parsed_json_data_list: List[Dict]) -> bool:
-        """Insert data parsed from a JSON file."""
+    def insert_parsed_json_data(
+        self,
+        marathon_id: int,
+        parsed_json_data_list: List[Dict],
+        batch_size: int = 500,
+    ) -> bool:
+        """Insert parsed JSON data into the database in batches.
+
+        Breaking large imports into smaller batches avoids long-running
+        transactions and reduces memory usage. Duplicate filenames are
+        skipped automatically by using a cache populated with existing
+        images as well as those inserted in previous batches.
+        """
+
         if not parsed_json_data_list:
             logger.warning("No data provided for insertion")
             return True
 
         try:
-            with self.engine.begin() as conn:
-                image_id_cache = {}
+            # Build cache of existing images for this marathon
+            with self.get_connection() as conn:
                 existing_stmt = select(self.images.c.image_id, self.images.c.filename).where(
                     self.images.c.marathon_id == marathon_id
                 )
-                for row in conn.execute(existing_stmt):
-                    image_id_cache[row.filename] = row.image_id
-                logger.info(
-                    f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache"
-                )
+                image_id_cache = {
+                    row.filename: row.image_id for row in conn.execute(existing_stmt)
+                }
 
-                demographics_records = []
-                shoes_records = []
+            logger.info(
+                f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache"
+            )
 
-                for record in tqdm(parsed_json_data_list):
-                    filename = record.get("filename")
-                    if not filename:
-                        logger.warning("Skipping record with no filename")
-                        continue
+            total_processed = 0
+            # Process data in batches to keep transactions small
+            for batch_start in range(0, len(parsed_json_data_list), batch_size):
+                batch = parsed_json_data_list[batch_start : batch_start + batch_size]
 
-                    if filename in image_id_cache:
-                        image_id = image_id_cache[filename]
-                    else:
-                        result = conn.execute(
-                            insert(self.images).values(
-                                marathon_id=marathon_id,
-                                filename=filename,
-                                original_width=record.get("original_width"),
-                                original_height=record.get("original_height"),
-                                category=record.get("folder"),
+                with self.engine.begin() as conn:
+                    demographics_records: List[Dict] = []
+                    shoes_records: List[Dict] = []
+
+                    for record in batch:
+                        filename = record.get("filename")
+                        if not filename:
+                            logger.warning("Skipping record with no filename")
+                            continue
+
+                        if filename in image_id_cache:
+                            image_id = image_id_cache[filename]
+                        else:
+                            result = conn.execute(
+                                insert(self.images).values(
+                                    marathon_id=marathon_id,
+                                    filename=filename,
+                                    original_width=record.get("original_width"),
+                                    original_height=record.get("original_height"),
+                                    category=record.get("folder"),
+                                )
                             )
-                        )
-                        image_id = result.inserted_primary_key[0]
-                        image_id_cache[filename] = image_id
+                            image_id = result.inserted_primary_key[0]
+                            image_id_cache[filename] = image_id
 
-                    demo = record.get("demographic")
-                    if demo:
-                        demographics_records.append(self._prepare_demographic_record(image_id, demo))
+                        demo = record.get("demographic")
+                        if demo:
+                            demographics_records.append(
+                                self._prepare_demographic_record(image_id, demo)
+                            )
 
-                    for shoe in record.get("shoes", []):
-                        if isinstance(shoe, dict):
-                            shoes_records.append(self._prepare_shoe_record(image_id, shoe))
+                        for shoe in record.get("shoes", []):
+                            if isinstance(shoe, dict):
+                                shoes_records.append(
+                                    self._prepare_shoe_record(image_id, shoe)
+                                )
 
-                if demographics_records:
-                    conn.execute(insert(self.person_demographics), demographics_records)
-                if shoes_records:
-                    conn.execute(insert(self.shoe_detections), shoes_records)
+                    if demographics_records:
+                        conn.execute(insert(self.person_demographics), demographics_records)
+                    if shoes_records:
+                        conn.execute(insert(self.shoe_detections), shoes_records)
 
+                total_processed += len(batch)
                 logger.info(
-                    f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images, "
-                    f"{len(demographics_records)} demographics, {len(shoes_records)} shoes"
+                    f"Processed batch {(batch_start // batch_size) + 1}: {len(batch)} records"
                 )
-                return True
+
+            logger.info(
+                f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images total"
+            )
+            return True
 
         except Exception as e:
             logger.error(f"Failed to insert parsed JSON data: {e}")
