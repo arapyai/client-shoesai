@@ -7,7 +7,8 @@ import requests
 
 from database_abstraction import get_marathon_list_from_db, get_images_paginated
 from ui_components import page_header_with_logout, check_auth, create_column_grid
-from app_config import IMAGE_SERVER
+
+IMAGE_SERVER = "http://localhost:8000/"  # URL do servidor de imagens
 
 st.set_page_config(layout="wide", page_title="Shoes AI - Imagens")
 
@@ -53,7 +54,8 @@ if selected_id:
     cols = create_column_grid(len(data["images"]), 4)
     for col, img in zip(cols, data["images"]):
         url = f"{IMAGE_SERVER.rstrip('/')}/{img['filename']}"
-        col.image(url, use_column_width=True)
+        print(f"Image URL: {url}")  # Debugging line
+        col.image(url, use_container_width=True)
         if col.button("Ver", key=f"view_{img['image_id']}"):
             st.session_state.selected_image = img
             st.session_state.show_modal = True
@@ -76,7 +78,7 @@ if st.session_state.get("show_modal") and st.session_state.get("selected_image")
                 bbox = demo.get("bbox")
                 if bbox and all(v is not None for v in bbox):
                     draw.rectangle(bbox, outline="red", width=3)
-            st.image(pil_img, use_column_width=True)
+            st.image(pil_img, use_container_width=True)
         else:
             st.error("Falha ao carregar a imagem")
     except Exception as e:

@@ -108,6 +108,7 @@ class DatabaseManager:
             Column('category', String(100)),
             Column('original_width', Integer),
             Column('original_height', Integer),
+            Column('bbox', String(100), nullable=True),  # Store bbox as JSON string
             UniqueConstraint('marathon_id', 'filename', name='uq_marathon_filename')
         )
         
@@ -411,6 +412,7 @@ class DatabaseManager:
                                     original_width=record.get("original_width"),
                                     original_height=record.get("original_height"),
                                     category=record.get("folder"),
+                                    bbox= json.dumps(record.get("bbox", []), ensure_ascii=False) if record.get("bbox") else None
                                 )
                             )
                             image_id = result.inserted_primary_key[0]
@@ -1096,6 +1098,7 @@ class DatabaseManager:
                         self.images.c.category,
                         self.images.c.original_width,
                         self.images.c.original_height,
+                        self.images.c.bbox,
                         self.shoe_detections.c.brand,
                         self.shoe_detections.c.probability,
                         self.shoe_detections.c.confidence,
@@ -1126,9 +1129,10 @@ class DatabaseManager:
                 )
 
                 rows = conn.execute(stmt).fetchall()
-
+            #print row headers for debugging
             images: Dict[int, Dict[str, Any]] = {}
             for row in rows:
+                bbox = [int(coord) for coord in json.loads(row.bbox)] if row.bbox else None
                 img_id = row.image_id
                 if img_id not in images:
                     images[img_id] = {
@@ -1137,24 +1141,43 @@ class DatabaseManager:
                         "category": row.category,
                         "original_width": row.original_width,
                         "original_height": row.original_height,
+                        "person_bbox": bbox,
                         "shoes": [],
                         "demographic": None,
                     }
 
                 if row.brand:
+                    # person_bbox is a bbox inside the original image, the shoe bbox is relative to the person create a function that converts the shoe bbox to the original image coordinates
+            
+                    shoe_bbox = [
+                        bbox[0] + row.bbox_x1,
+                        bbox[1] + row.bbox_y1,
+                        bbox[0] + row.bbox_x2,
+                        bbox[1] + row.bbox_y2,
+                    ]
+                                  
                     images[img_id]["shoes"].append({
                         "brand": row.brand,
                         "probability": row.probability,
                         "confidence": row.confidence,
-                        "bbox": [row.bbox_x1, row.bbox_y1, row.bbox_x2, row.bbox_y2],
+                        "bbox": shoe_bbox,
                     })
+                    
 
                 if images[img_id]["demographic"] is None and any([row.gender_label, row.age_label, row.race_label]):
+
+                    #fix later
+                    person_bbox = [
+                        bbox[0] + row.person_bbox_x1,
+                        bbox[1] + row.person_bbox_y1,
+                        bbox[0] + row.person_bbox_x2,
+                        bbox[1] + row.person_bbox_y2,
+                    ]
                     images[img_id]["demographic"] = {
                         "gender": {"label": row.gender_label, "prob": row.gender_prob},
                         "age": {"label": row.age_label, "prob": row.age_prob},
                         "race": {"label": row.race_label, "prob": row.race_prob},
-                        "bbox": [row.person_bbox_x1, row.person_bbox_y1, row.person_bbox_x2, row.person_bbox_y2],
+                        "bbox": person_bbox,
                     }
 
             return {"total": total_images, "images": list(images.values())}
