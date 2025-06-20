@@ -1081,6 +1081,86 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get data for selected marathons: {e}")
             return pd.DataFrame(), pd.DataFrame()
+
+    def get_images_paginated(self, marathon_id: int, offset: int = 0, limit: int = 20) -> Dict[str, Any]:
+        """Retrieve images and detection data for a marathon with pagination."""
+        try:
+            with self.get_connection() as conn:
+                total_stmt = select(func.count()).select_from(self.images).where(self.images.c.marathon_id == marathon_id)
+                total_images = conn.execute(total_stmt).scalar() or 0
+
+                stmt = (
+                    select(
+                        self.images.c.image_id,
+                        self.images.c.filename,
+                        self.images.c.category,
+                        self.images.c.original_width,
+                        self.images.c.original_height,
+                        self.shoe_detections.c.brand,
+                        self.shoe_detections.c.probability,
+                        self.shoe_detections.c.confidence,
+                        self.shoe_detections.c.bbox_x1,
+                        self.shoe_detections.c.bbox_y1,
+                        self.shoe_detections.c.bbox_x2,
+                        self.shoe_detections.c.bbox_y2,
+                        self.person_demographics.c.gender_label,
+                        self.person_demographics.c.gender_prob,
+                        self.person_demographics.c.age_label,
+                        self.person_demographics.c.age_prob,
+                        self.person_demographics.c.race_label,
+                        self.person_demographics.c.race_prob,
+                        self.person_demographics.c.person_bbox_x1,
+                        self.person_demographics.c.person_bbox_y1,
+                        self.person_demographics.c.person_bbox_x2,
+                        self.person_demographics.c.person_bbox_y2,
+                    )
+                    .select_from(
+                        self.images
+                        .outerjoin(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
+                        .outerjoin(self.person_demographics, self.images.c.image_id == self.person_demographics.c.image_id)
+                    )
+                    .where(self.images.c.marathon_id == marathon_id)
+                    .order_by(self.images.c.image_id)
+                    .offset(offset)
+                    .limit(limit)
+                )
+
+                rows = conn.execute(stmt).fetchall()
+
+            images: Dict[int, Dict[str, Any]] = {}
+            for row in rows:
+                img_id = row.image_id
+                if img_id not in images:
+                    images[img_id] = {
+                        "image_id": img_id,
+                        "filename": row.filename,
+                        "category": row.category,
+                        "original_width": row.original_width,
+                        "original_height": row.original_height,
+                        "shoes": [],
+                        "demographic": None,
+                    }
+
+                if row.brand:
+                    images[img_id]["shoes"].append({
+                        "brand": row.brand,
+                        "probability": row.probability,
+                        "confidence": row.confidence,
+                        "bbox": [row.bbox_x1, row.bbox_y1, row.bbox_x2, row.bbox_y2],
+                    })
+
+                if images[img_id]["demographic"] is None and any([row.gender_label, row.age_label, row.race_label]):
+                    images[img_id]["demographic"] = {
+                        "gender": {"label": row.gender_label, "prob": row.gender_prob},
+                        "age": {"label": row.age_label, "prob": row.age_prob},
+                        "race": {"label": row.race_label, "prob": row.race_prob},
+                        "bbox": [row.person_bbox_x1, row.person_bbox_y1, row.person_bbox_x2, row.person_bbox_y2],
+                    }
+
+            return {"total": total_images, "images": list(images.values())}
+        except Exception as e:
+            logger.error(f"Failed to get paginated images: {e}")
+            return {"total": 0, "images": []}
 # Global database manager instance
 try:
     db = DatabaseManager()
@@ -1116,6 +1196,13 @@ def get_individual_marathon_metrics(marathon_ids):
     if db is None:
         return {}
     return db.get_individual_marathon_metrics(marathon_ids)
+
+
+def get_images_paginated(marathon_id, offset=0, limit=20):
+    """Backward compatibility function for paginated image retrieval."""
+    if db is None:
+        return {"total": 0, "images": []}
+    return db.get_images_paginated(marathon_id, offset, limit)
 
 
 def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
