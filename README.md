@@ -43,7 +43,7 @@ streamlit run app.py
 
 ## Uso
 
-Após fazer login, escolha as maratonas que deseja analisar na página **Relatórios**. Também é possível importar novos dados pela página **Importador de Dados**. A seção **Sobre** descreve o propósito da plataforma e a página **Perfil** exibe informações do usuário conectado.
+Após fazer login, escolha as maratonas que deseja analisar na página **Relatórios**. Também é possível importar novos dados pela página **Importador de Dados**. A seção **Imagens** permite navegar pelas fotos analisadas com suas detecções. A página **Sobre** descreve o propósito da plataforma e a página **Perfil** exibe informações do usuário conectado.
 
 ---
 

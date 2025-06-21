@@ -13,3 +13,4 @@ python-dotenv
 
 # Progress bars for migration
 tqdm
+requests
