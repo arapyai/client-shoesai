@@ -127,16 +127,16 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
         
         # Gender analysis
         if has_gender_data:
-            with st.expander("👥 Análise por Gênero"):
+            with st.expander("👥 Presença de marcas por gênero"):
                 render_gender_by_brand(marathon_data["gender_brand_distribution"], min_percentage_for_display=5.0)
         
         # Race analysis
-        if has_race_data:
-            with st.expander("🌍 Análise por Raça"):
-                render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
+        #if has_race_data:
+        #    with st.expander("🌍 Presença de marcas por raça"):
+        #        render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
         
         # Marathon comparison chart
-        with st.expander("📈 Comparação de Categorias"):
+        with st.expander("📈 Presença de marcas por distância"):
             render_marathon_comparison_chart(
                 marathon_data["brand_counts_by_category"],
                 highlight=["Olympikus", "Mizuno"]  # Default highlights
