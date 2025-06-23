@@ -108,6 +108,7 @@ class DatabaseManager:
             Column('category', String(100)),
             Column('original_width', Integer),
             Column('original_height', Integer),
+            Column('bbox', String(100), nullable=True),  # Store bbox as JSON string
             UniqueConstraint('marathon_id', 'filename', name='uq_marathon_filename')
         )
         
@@ -411,6 +412,7 @@ class DatabaseManager:
                                     original_width=record.get("original_width"),
                                     original_height=record.get("original_height"),
                                     category=record.get("folder"),
+                                    bbox= json.dumps(record.get("bbox", []), ensure_ascii=False) if record.get("bbox") else None
                                 )
                             )
                             image_id = result.inserted_primary_key[0]
@@ -1081,6 +1083,107 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get data for selected marathons: {e}")
             return pd.DataFrame(), pd.DataFrame()
+
+    def get_images_paginated(self, marathon_id: int, offset: int = 0, limit: int = 20) -> Dict[str, Any]:
+        """Retrieve images and detection data for a marathon with pagination."""
+        try:
+            with self.get_connection() as conn:
+                total_stmt = select(func.count()).select_from(self.images).where(self.images.c.marathon_id == marathon_id)
+                total_images = conn.execute(total_stmt).scalar() or 0
+
+                stmt = (
+                    select(
+                        self.images.c.image_id,
+                        self.images.c.filename,
+                        self.images.c.category,
+                        self.images.c.original_width,
+                        self.images.c.original_height,
+                        self.images.c.bbox,
+                        self.shoe_detections.c.brand,
+                        self.shoe_detections.c.probability,
+                        self.shoe_detections.c.confidence,
+                        self.shoe_detections.c.bbox_x1,
+                        self.shoe_detections.c.bbox_y1,
+                        self.shoe_detections.c.bbox_x2,
+                        self.shoe_detections.c.bbox_y2,
+                        self.person_demographics.c.gender_label,
+                        self.person_demographics.c.gender_prob,
+                        self.person_demographics.c.age_label,
+                        self.person_demographics.c.age_prob,
+                        self.person_demographics.c.race_label,
+                        self.person_demographics.c.race_prob,
+                        self.person_demographics.c.person_bbox_x1,
+                        self.person_demographics.c.person_bbox_y1,
+                        self.person_demographics.c.person_bbox_x2,
+                        self.person_demographics.c.person_bbox_y2,
+                    )
+                    .select_from(
+                        self.images
+                        .outerjoin(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
+                        .outerjoin(self.person_demographics, self.images.c.image_id == self.person_demographics.c.image_id)
+                    )
+                    .where(self.images.c.marathon_id == marathon_id)
+                    .order_by(self.images.c.image_id)
+                    .offset(offset)
+                    .limit(limit)
+                )
+
+                rows = conn.execute(stmt).fetchall()
+            #print row headers for debugging
+            images: Dict[int, Dict[str, Any]] = {}
+            for row in rows:
+                bbox = [int(coord) for coord in json.loads(row.bbox)] if row.bbox else None
+                img_id = row.image_id
+                if img_id not in images:
+                    images[img_id] = {
+                        "image_id": img_id,
+                        "filename": row.filename,
+                        "category": row.category,
+                        "original_width": row.original_width,
+                        "original_height": row.original_height,
+                        "person_bbox": bbox,
+                        "shoes": [],
+                        "demographic": None,
+                    }
+
+                if row.brand:
+                    # person_bbox is a bbox inside the original image, the shoe bbox is relative to the person create a function that converts the shoe bbox to the original image coordinates
+            
+                    shoe_bbox = [
+                        bbox[0] + row.bbox_x1,
+                        bbox[1] + row.bbox_y1,
+                        bbox[0] + row.bbox_x2,
+                        bbox[1] + row.bbox_y2,
+                    ]
+                                  
+                    images[img_id]["shoes"].append({
+                        "brand": row.brand,
+                        "probability": row.probability,
+                        "confidence": row.confidence,
+                        "bbox": shoe_bbox,
+                    })
+                    
+
+                if images[img_id]["demographic"] is None and any([row.gender_label, row.age_label, row.race_label]):
+
+                    #fix later
+                    person_bbox = [
+                        bbox[0] + row.person_bbox_x1,
+                        bbox[1] + row.person_bbox_y1,
+                        bbox[0] + row.person_bbox_x2,
+                        bbox[1] + row.person_bbox_y2,
+                    ]
+                    images[img_id]["demographic"] = {
+                        "gender": {"label": row.gender_label, "prob": row.gender_prob},
+                        "age": {"label": row.age_label, "prob": row.age_prob},
+                        "race": {"label": row.race_label, "prob": row.race_prob},
+                        "bbox": person_bbox,
+                    }
+
+            return {"total": total_images, "images": list(images.values())}
+        except Exception as e:
+            logger.error(f"Failed to get paginated images: {e}")
+            return {"total": 0, "images": []}
 # Global database manager instance
 try:
     db = DatabaseManager()
@@ -1116,6 +1219,13 @@ def get_individual_marathon_metrics(marathon_ids):
     if db is None:
         return {}
     return db.get_individual_marathon_metrics(marathon_ids)
+
+
+def get_images_paginated(marathon_id, offset=0, limit=20):
+    """Backward compatibility function for paginated image retrieval."""
+    if db is None:
+        return {"total": 0, "images": []}
+    return db.get_images_paginated(marathon_id, offset, limit)
 
 
 def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
