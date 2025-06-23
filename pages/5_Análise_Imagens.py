@@ -12,7 +12,7 @@ IMAGE_SERVER = "http://localhost:8000/"  # URL do servidor de imagens
 
 st.set_page_config(layout="wide", page_title="Shoes AI - Imagens")
 
-user_id = check_auth()
+user_id = check_auth(admin_only=True)
 
 # Header
 page_header_with_logout("🖼️ Navegar Imagens", "Selecione uma prova para visualizar as detecções", key_suffix="gallery")
