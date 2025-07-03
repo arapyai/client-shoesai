@@ -2,15 +2,9 @@ import streamlit as st
 import pandas as pd
 from ui_components import (
     page_header_with_logout,
-    report_page_content_main,
-    render_pdf_preview_modal,
-    render_marathon_info_cards,
     render_brand_distribution_chart,
-    render_gender_by_brand,
-    render_top_brands_table,
-    render_race_by_brand,
-    render_marathon_comparison_chart,
-    render_individual_marathon_column,
+    render_demographic_analysis,
+    render_marathon_info_cards,
     check_auth
 )
 from database_abstraction import db
@@ -22,350 +16,91 @@ st.set_page_config(layout="wide", page_title="Shoes AI - Relatórios")
 user_id = check_auth()
 
 # --- Fetch Marathon List from DB for Selector ---
-@st.cache_data # Cache the list of marathons
+@st.cache_data
 def fetch_marathon_options_from_db_cached():
     return db.get_marathon_list_from_db()
 
-if 'MARATHON_OPTIONS_DB_CACHED' not in st.session_state:
-    st.session_state.MARATHON_OPTIONS_DB_CACHED = fetch_marathon_options_from_db_cached()
+marathon_options = fetch_marathon_options_from_db_cached()
+MARATHON_NAMES_LIST = [m['name'] for m in marathon_options]
+MARATHON_ID_MAP = {m['name']: m['id'] for m in marathon_options}
 
-MARATHON_NAMES_LIST = [m['name'] for m in st.session_state.MARATHON_OPTIONS_DB_CACHED]
-MARATHON_ID_MAP = {m['name']: m['id'] for m in st.session_state.MARATHON_OPTIONS_DB_CACHED}
+# --- Page Header and Marathon Selection ---
+page_header_with_logout("📊 Relatórios de Análise", 
+                        "Visualize e analise os dados das provas importadas.", 
+                        key_suffix="reports")
 
+# Marathon selection
+st.subheader("🏃‍♂️ Seleção de Provas")
 
-# --- Session State Initialization for this page (DB oriented) ---
-if 'selected_marathon_names_ui' not in st.session_state:
-    st.session_state.selected_marathon_names_ui = MARATHON_NAMES_LIST[:1] if MARATHON_NAMES_LIST else []
+if not MARATHON_NAMES_LIST:
+    st.warning("⚠️ Nenhuma prova encontrada no sistema. Importe dados na página de Importação primeiro.")
+    if st.button("📥 Ir para Importação"):
+        st.switch_page("pages/3_📥_Importador_de_Dados.py")
+    st.stop()
 
-# Initialize processed_report_data if it doesn't exist or if selections might have changed
-# This initial load ensures some data is present when the page first loads or after an import
-if 'processed_report_data' not in st.session_state or \
-   (st.session_state.selected_marathon_names_ui and not st.session_state.processed_report_data.get("total_images_selected", -1) > -1) : # -1 to force initial load
-    
-    initial_marathon_ids = [MARATHON_ID_MAP[name] for name in st.session_state.selected_marathon_names_ui if name in MARATHON_ID_MAP]
-    # Filter out None values
-    initial_marathon_ids = [mid for mid in initial_marathon_ids if mid is not None]
-    
-    if initial_marathon_ids:
-        # Use pre-computed metrics for initial load too
-        st.session_state.processed_report_data = db.get_precomputed_marathon_metrics(initial_marathon_ids)
+# Simple marathon selector
+selected_marathon = st.selectbox(
+    "Escolha uma prova para análise:",
+    options=MARATHON_NAMES_LIST,
+    key="selected_marathon_simple"
+)
 
-if 'show_report_content_db' not in st.session_state:
-    st.session_state.show_report_content_db = bool(st.session_state.selected_marathon_names_ui) and \
-                                            st.session_state.processed_report_data.get("total_images_selected", 0) > 0
-if 'show_pdf_preview_db' not in st.session_state:
-    st.session_state.show_pdf_preview_db = False
-
-# --- Helper Functions for Optimized Processing ---
-@st.cache_data
-def get_individual_marathon_data_cached(marathon_id: int) -> dict:
-    """
-    Cache individual marathon data to avoid reprocessing.
-    Returns processed data for a single marathon using pre-computed metrics.
-    """
-    return db.get_precomputed_marathon_metrics([marathon_id])
-
-def preprocess_individual_marathons(marathon_names: list) -> dict:
-    """
-    Efficiently preprocess data for multiple marathons using pre-computed metrics.
-    Returns a dict mapping marathon_name -> processed_data.
-    """
-    # Get marathon IDs and filter out None values
-    marathon_ids = [MARATHON_ID_MAP.get(name) for name in marathon_names if MARATHON_ID_MAP.get(name) is not None]
-    # Filter out any None values to ensure we have only int values
-    marathon_ids = [mid for mid in marathon_ids if mid is not None]
+if selected_marathon and selected_marathon in MARATHON_ID_MAP:
+    marathon_id = MARATHON_ID_MAP[selected_marathon]
     
-    if not marathon_ids:
-        return {}
+    # Get marathon data
+    with st.spinner("🔄 Carregando dados da prova..."):
+        marathon_data = db.get_individual_marathon_metrics(marathon_id)
     
-    # Use the new efficient individual metrics function
-    with st.spinner("Carregando dados pré-calculados das provas..."):
-        # Get all individual marathon metrics in a single database call
-        individual_data = db.get_individual_marathon_metrics(marathon_ids[0]) if marathon_ids else {}
-    
-    return individual_data
-
-def render_individual_marathon_column(marathon_name: str, marathon_data: dict):
-    """
-    Render a single marathon's data in a column.
-    Reusable function for individual marathon visualization.
-    """
-    st.subheader(f"📊 {marathon_name}")
-    
-    # Create cards for this marathon
-    marathon_cards_data = {
-        marathon_name: marathon_data.get("marathon_specific_data_for_cards", {}).get(marathon_name, {})
-    }
-    
-    # Display marathon info card
-    render_marathon_info_cards(
-        [marathon_name], 
-        marathon_cards_data,
-        st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
-    )
-    
-    # Only show charts if there's meaningful data
-    has_brand_data = not marathon_data["brand_counts_all_selected"].empty
-    has_gender_data = not marathon_data["gender_brand_distribution"].empty
-    has_race_data = not marathon_data["race_brand_distribution"].empty
-    
-    if has_brand_data:
-        # Brand distribution
-        with st.expander("📊 Distribuição de Marcas", expanded=True):
-            render_brand_distribution_chart(
-                marathon_data["brand_counts_all_selected"],
-                highlight=marathon_data.get("highlight_brands", ["Olympikus", "Mizuno"])
-            )
+    if marathon_data:
+        # Marathon info card
+        render_marathon_info_cards(marathon_data)
         
-        # Gender analysis
-        if has_gender_data:
-            with st.expander("👥 Presença de marcas por gênero"):
-                render_gender_by_brand(marathon_data["gender_brand_distribution"], min_percentage_for_display=5.0)
+        # Brand distribution chart
+        render_brand_distribution_chart(marathon_data)
+
+        # Demographic analysis
+        render_demographic_analysis(marathon_data)    
+
+        # Export options
+        st.markdown("---")
+        st.subheader("📤 Opções de Exportação")
         
-        # Race analysis
-        #if has_race_data:
-        #    with st.expander("🌍 Presença de marcas por raça"):
-        #        render_race_by_brand(marathon_data["race_brand_distribution"], min_percentage_for_display=5.0)
+        col1, col2, col3 = st.columns(3)
         
-        # Marathon comparison chart
-        with st.expander("📈 Presença de marcas por distância"):
-            render_marathon_comparison_chart(
-                marathon_data["brand_counts_by_category"],
-                highlight=["Olympikus", "Mizuno"]  # Default highlights
-            )
-        # Top brands table
-        with st.expander("🏆 Top Marcas"):
-            render_top_brands_table(marathon_data["top_brands_all_selected"])
+        with col1:
+            if st.button("📊 Exportar Dados (CSV)", use_container_width=True):
+                # Create CSV from marathon data
+                try:
+                    runners_data = db.get_marathon_runners(marathon_id)
+                    if runners_data:
+                        df = pd.DataFrame(runners_data)
+                        csv = df.to_csv(index=False)
+                        st.download_button(
+                            label="⬇️ Download CSV",
+                            data=csv,
+                            file_name=f"{selected_marathon}_dados.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("Nenhum dado encontrado para exportação.")
+                except Exception as e:
+                    st.error(f"Erro ao exportar: {e}")
+        
+        if st.button("📈 Exportar Gráficos", use_container_width=True):
+            st.info("🚧 Funcionalidade em desenvolvimento")
+        
+        if st.button("📄 Gerar Relatório PDF", use_container_width=True):
+            st.info("🚧 Funcionalidade em desenvolvimento")
+        
+        # Debug info (for development)
+        if st.sidebar.checkbox("🔧 Mostrar Info de Debug"):
+            st.sidebar.subheader("Debug Info")
+            st.sidebar.write(f"Provas disponíveis: {len(MARATHON_NAMES_LIST)}")
+            st.sidebar.write(f"Prova selecionada: {selected_marathon}")
+            st.sidebar.write(f"ID da prova: {MARATHON_ID_MAP.get(selected_marathon, 'N/A')}")
+            st.sidebar.json(marathon_data, expanded=False)
     else:
-        st.info("📋 Nenhum dado de marcas disponível para esta prova.")
-
-def render_multiple_marathons_view(selected_marathons: list):
-    """
-    Efficiently render multiple marathons with different visualization modes.
-    """
-    st.subheader("🏃‍♂️ Análise por Prova")
-    
-    # Add visualization mode selector for multiple marathons
-    if len(selected_marathons) > 1:
-        viz_mode = st.radio(
-            "Modo de Visualização:",
-            options=["columns", "timeline"],
-            format_func=lambda x: {
-                "columns": "📊 Lado a Lado", 
-                "timeline": "📈 Evolução Temporal"
-                }[x],
-            horizontal=True,
-            key="marathon_viz_mode"
-        )
-    else:
-        viz_mode = "columns"  # Default for single marathon
-    
-    if viz_mode == "columns":
-        st.caption("Visualize os dados específicos de cada prova selecionada lado a lado")
-        render_columns_view(selected_marathons)
-    elif viz_mode == "timeline":
-        st.caption("Visualize a evolução das marcas ao longo do tempo nas provas selecionadas")
-        render_timeline_view(selected_marathons)
-    
-def render_columns_view(selected_marathons: list):
-    """
-    Render marathons in side-by-side columns (original approach).
-    """
-    # Preprocess all marathon data efficiently
-    individual_data = preprocess_individual_marathons(selected_marathons)
-    
-    # Create columns and render each marathon
-    cols = st.columns(len(selected_marathons))
-    
-    for i, marathon_name in enumerate(selected_marathons):
-        if marathon_name in individual_data:
-            with cols[i]:
-                render_individual_marathon_column(marathon_name, individual_data[marathon_name])
-
-def render_timeline_view(selected_marathons: list):
-    """
-    Render marathons in a timeline view with line charts showing brand evolution.
-    """
-    from ui_components import render_brand_timeline_chart
-    
-    # Get all marathon data
-    individual_data = preprocess_individual_marathons(selected_marathons)
-    
-    if not individual_data:
-        st.warning("Nenhum dado disponível para as provas selecionadas.")
-        return
-    
-    # Prepare timeline data
-    timeline_data = prepare_timeline_data(individual_data, selected_marathons)
-    
-    if timeline_data.empty:
-        st.warning("Não há dados suficientes para gerar a visualização temporal.")
-        return
-    
-    # Render the timeline chart
-    render_brand_timeline_chart(timeline_data)
-
-def prepare_timeline_data(individual_data: dict, selected_marathons: list) -> pd.DataFrame:
-    """
-    Prepare data for timeline visualization by combining marathon data with dates.
-    
-    Args:
-        individual_data: Dictionary containing processed data for each marathon
-        selected_marathons: List of selected marathon names
-        
-    Returns:
-        DataFrame with columns: marathon_name, event_date, brand, percentage
-    """
-    timeline_records = []
-    
-    # Get marathon metadata for dates
-    marathon_metadata = st.session_state.get("MARATHON_OPTIONS_DB_CACHED", [])
-    
-    for marathon_name in selected_marathons:
-        if marathon_name not in individual_data:
-            continue
-            
-        marathon_data = individual_data[marathon_name]
-        
-        # Get event date for this marathon
-        marathon_meta = next((m for m in marathon_metadata if m['name'] == marathon_name), None)
-        event_date = marathon_meta.get('event_date') if marathon_meta else None
-        
-        if not event_date:
-            # Skip marathons without dates
-            continue
-            
-        # Parse the event date (assuming format YYYY-MM-DD)
-        try:
-            event_date_parsed = pd.to_datetime(event_date)
-        except:
-            # If date parsing fails, skip this marathon
-            continue
-        
-        # Get brand counts for this marathon
-        brand_counts = marathon_data.get("brand_counts_all_selected", pd.Series())
-        
-        if brand_counts.empty:
-            continue
-            
-        # Calculate percentages
-        total_shoes = brand_counts.sum()
-        
-        for brand, count in brand_counts.items():
-            percentage = (count / total_shoes) * 100 if total_shoes > 0 else 0
-            
-            timeline_records.append({
-                'marathon_name': marathon_name,
-                'event_date': event_date_parsed,
-                'brand': brand,
-                'count': count,
-                'percentage': percentage
-            })
-    
-    # Convert to DataFrame
-    timeline_df = pd.DataFrame(timeline_records)
-    
-    if timeline_df.empty:
-        return timeline_df
-    
-    # Sort by date
-    timeline_df = timeline_df.sort_values('event_date')
-    
-    return timeline_df
-
-# --- Main Report Page UI ---
-def report_page_db():
-    # Use the reusable page header component
-    page_header_with_logout("📊 Análise de Provas", 
-                           "Selecione as provas que gostaria de analisar. Os relatórios são gerados automaticamente.",
-                           key_suffix="reports")
-
-    cols_actions = st.columns([3, 1, 1.5]) # Adjusted for removed button
-    with cols_actions[0]:
-        current_selection_in_ui = list(st.session_state.selected_marathon_names_ui) # Make a copy
-        
-        selected_marathon_names_from_multiselect = st.multiselect(
-            "Selecione quais \"provas\" (datasets) analisar:",
-            options=MARATHON_NAMES_LIST,
-            default=current_selection_in_ui,
-            key="marathon_selector_db_page"
-        )
-    
-    # Detect if selection changed in multiselect to update session state and auto-generate report
-    if selected_marathon_names_from_multiselect != current_selection_in_ui:
-        st.session_state.selected_marathon_names_ui = selected_marathon_names_from_multiselect
-        st.session_state.show_report_content_db = False # Important: reset to force regeneration
-        
-        # Auto-generate report when selection changes
-        if st.session_state.selected_marathon_names_ui:
-            selected_ids = [MARATHON_ID_MAP[name] for name in st.session_state.selected_marathon_names_ui if name in MARATHON_ID_MAP]
-            if selected_ids:
-                with st.spinner("Atualizando relatório..."):
-                    # Try to use pre-computed metrics first
-                    st.session_state.processed_report_data = db.get_precomputed_marathon_metrics(selected_ids)
-                    st.session_state.show_report_content_db = True
-            else:
-                st.warning("Nenhum ID de maratona válido encontrado para a seleção.")
-                st.session_state.show_report_content_db = False
-        else:
-            # No marathons selected, clear the report
-            st.session_state.show_report_content_db = False
-        st.rerun()
-
-    disable_export_buttons = not st.session_state.show_report_content_db
-    
-    csv_data_str = ""
-    can_export_csv_flag = False
-    if st.session_state.show_report_content_db and \
-       "top_brands_all_selected" in st.session_state.processed_report_data and \
-       not st.session_state.processed_report_data["top_brands_all_selected"].empty:
-        csv_data_str = st.session_state.processed_report_data["top_brands_all_selected"].to_csv(index=False).encode('utf-8')
-        can_export_csv_flag = False
-
-    with cols_actions[1]: #disabled=disable_export_buttons desabilitado temporariamente
-        if st.button("Exportar PDF", use_container_width=True,
-                      disabled=True, key="export_pdf_db_btn_main"):
-            st.session_state.show_pdf_preview_db = True
-
-    with cols_actions[2]:
-        st.download_button(
-            "Exportar Top Marcas (CSV)",
-            data=csv_data_str if can_export_csv_flag else "Nenhum dado para exportar.",
-            file_name="top_marcas_report.csv",
-            mime="text/csv",
-            use_container_width=True,
-            disabled=not can_export_csv_flag,
-            key="export_csv_db_btn_main"
-        )
-    st.markdown("---")
-
-    # --- Display Content or Modal ---
-    # Data for cards needs to be p
-    #if debug=True in url parameters, show raw dataassed specifically for selected marathons
-    # `processed_report_data` already contains `marathon_specific_data_for_cards`
-    
-    if st.session_state.show_pdf_preview_db and st.session_state.show_report_content_db:
-        # Pass the already processed data for the selected marathons
-        render_pdf_preview_modal(st.session_state.processed_report_data, 
-                                 st.session_state.processed_report_data.get("marathon_specific_data_for_cards", {}))
-    elif st.session_state.show_report_content_db and st.session_state.selected_marathon_names_ui:
-        selected_marathons = st.session_state.selected_marathon_names_ui
-        
-        # Always use the optimized column-based rendering
-        render_multiple_marathons_view(selected_marathons)
-    else:
-        st.markdown("""
-            <div style="text-align: center; padding: 50px;">
-                <span style="font-size: 80px;">🏃‍♂️</span>
-                <h3>Escolha sua prova/pasta</h3>
-                <p>Para iniciar, selecione uma ou mais provas/pastas no menu acima</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    if not st.session_state.get("logged_in", False):
-        st.warning("Por favor, faça login para acessar esta página.")
-        st.link_button("Ir para Login", "/")
-        st.stop()
-    else:
-        report_page_db()
+        st.error(f"❌ Não foi possível carregar os dados da prova '{selected_marathon}'.")
+else:
+    st.info("👆 Selecione uma prova acima para visualizar o relatório.")

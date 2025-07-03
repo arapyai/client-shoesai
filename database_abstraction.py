@@ -594,14 +594,46 @@ class DatabaseManager:
     
     def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
         """
-        Get precomputed metrics from marathon descriptions.
-        This is a simplified version that extracts basic metrics.
+        Get precomputed metrics from marathon descriptions or calculate from runner data.
+        First tries to read stored statistics, then falls back to calculation.
         """
         try:
             if not marathon_ids:
                 return {}
             
             with self.get_connection() as conn:
+                # First try to get stored statistics from descriptions
+                stmt = select(self.marathons.c.description).where(
+                    self.marathons.c.marathon_id.in_(marathon_ids)
+                )
+                descriptions = conn.execute(stmt).fetchall()
+                
+                # Try to extract statistics from descriptions
+                stored_stats = None
+                for desc_row in descriptions:
+                    if desc_row.description and "--- ESTATÍSTICAS AUTOMÁTICAS ---" in desc_row.description:
+                        try:
+                            # Extract JSON from description
+                            stats_start = desc_row.description.find("--- ESTATÍSTICAS AUTOMÁTICAS ---")
+                            stats_json = desc_row.description[stats_start + len("--- ESTATÍSTICAS AUTOMÁTICAS ---"):].strip()
+                            stored_stats = json.loads(stats_json)
+                            
+                            # Convert stored stats to expected format
+                            if stored_stats:
+                                return {
+                                    'total_shoes_detected': stored_stats.get('total_participants', 0),
+                                    'unique_brands_count': stored_stats.get('total_brands', 0),
+                                    'leader_brand_name': stored_stats.get('leader_brand', {}).get('name', 'N/A'),
+                                    'total_images_selected': stored_stats.get('total_participants', 0),
+                                    'stored_statistics': stored_stats  # Include full stats for reports
+                                }
+                        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+                            logger.warning(f"Failed to parse stored statistics: {e}")
+                            continue
+                
+                # Fallback: Calculate from runner data if no stored stats found
+                logger.info(f"No stored statistics found for marathons {marathon_ids}, calculating from runner data...")
+                
                 # Get total runners across all specified marathons
                 stmt = select(func.count(self.marathon_runners.c.id)).where(
                     self.marathon_runners.c.marathon_id.in_(marathon_ids)
@@ -633,11 +665,32 @@ class DatabaseManager:
                 leader_result = conn.execute(stmt).fetchone()
                 leader_brand = leader_result.shoe_brand if leader_result else "N/A"
                 
+                # Get brand distribution for more complete stats
+                brand_stmt = select(
+                    self.marathon_runners.c.shoe_brand,
+                    func.count(self.marathon_runners.c.shoe_brand).label('count')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
+                        self.marathon_runners.c.shoe_brand.isnot(None)
+                    )
+                ).group_by(self.marathon_runners.c.shoe_brand).order_by(
+                    func.count(self.marathon_runners.c.shoe_brand).desc()
+                )
+                brand_results = conn.execute(brand_stmt).fetchall()
+                
+                brand_distribution = {}
+                for row in brand_results:
+                    brand_distribution[row.shoe_brand] = row.count
+                
                 return {
                     'total_shoes_detected': total_shoes,
                     'unique_brands_count': unique_brands,
-                    'leader_brand_name': leader_brand
+                    'leader_brand_name': leader_brand,
+                    'total_images_selected': total_shoes,
+                    'brand_distribution': brand_distribution
                 }
+                
         except Exception as e:
             logger.error(f"Failed to get precomputed marathon metrics: {e}")
             return {}
@@ -786,14 +839,62 @@ class DatabaseManager:
                         'avg': round(float(confidence_result.avg), 2) if confidence_result and confidence_result.avg else 0,
                         'min': round(float(confidence_result.min), 2) if confidence_result and confidence_result.min else 0,
                         'max': round(float(confidence_result.max), 2) if confidence_result and confidence_result.max else 0
-                    }
-                }
-                
-                return metrics
+                    },
+                    # Compatibility fields for reports
+                'total_shoes_detected': total_participants,
+                'unique_brands_count': len(brand_distribution),
+                'leader_brand_name': leader_brand or 'N/A',
+                'total_images_selected': total_participants
+            }
+            
+            return metrics
                 
         except Exception as e:
             logger.error(f"Failed to get individual marathon metrics for {marathon_id}: {e}")
             return {}
+    
+    def delete_marathon_by_id(self, marathon_id: int) -> bool:
+        """
+        Delete a marathon and all associated data by marathon ID.
+        
+        Args:
+            marathon_id: ID of the marathon to delete
+            
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            with self.get_connection() as conn:
+                trans = conn.begin()
+                try:
+                    # First, delete all runners associated with this marathon
+                    delete_runners_stmt = delete(self.marathon_runners).where(
+                        self.marathon_runners.c.marathon_id == marathon_id
+                    )
+                    runners_result = conn.execute(delete_runners_stmt)
+                    
+                    # Then, delete the marathon itself
+                    delete_marathon_stmt = delete(self.marathons).where(
+                        self.marathons.c.marathon_id == marathon_id
+                    )
+                    marathon_result = conn.execute(delete_marathon_stmt)
+                    
+                    if marathon_result.rowcount > 0:
+                        trans.commit()
+                        logger.info(f"Successfully deleted marathon {marathon_id} and {runners_result.rowcount} associated runners")
+                        return True
+                    else:
+                        trans.rollback()
+                        logger.warning(f"Marathon {marathon_id} not found for deletion")
+                        return False
+                        
+                except Exception as e:
+                    trans.rollback()
+                    raise e
+                    
+        except Exception as e:
+            logger.error(f"Failed to delete marathon {marathon_id}: {e}")
+            return False
 
 
 # Global database manager instance

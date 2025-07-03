@@ -231,79 +231,65 @@ def display_header():
     # Add profile and logout to sidebar
     add_sidebar_profile_and_logout()
 
-def render_marathon_info_cards(selected_marathon_names, marathon_specific_data_for_cards, db_marathon_metadata_list):
+def render_marathon_info_cards(marathon_data: Dict[str, Any]):
     """
-    Renders cards for each selected marathon.
-    marathon_specific_data_for_cards: dict from processed_metrics with counts per marathon
-    db_marathon_metadata_list: list of dicts from get_marathon_list_from_db, containing metadata like date, location
+    Renders cards for a marathon using data directly from database.
+    Optimized to work with get_individual_marathon_metrics output.
+    
+    Args:
+        marathon_data: Dictionary containing marathon metrics from database
     """
-    if not selected_marathon_names:
+    if not marathon_data:
+        st.info("📋 Nenhum dado disponível para exibição.")
         return
     
-    cols_needed = len(selected_marathon_names)
-    if cols_needed == 0: return
-
-    cols = st.columns(cols_needed)
-    for i, marathon_name in enumerate(selected_marathon_names):
-        card_data = marathon_specific_data_for_cards.get(marathon_name, {})
-        
-        # Find metadata for this marathon from the list fetched from DB
-        marathon_meta = next((m for m in db_marathon_metadata_list if m['name'] == marathon_name), None)
-        event_date = marathon_meta.get('event_date', "XX/XX/XXXX") if marathon_meta else "XX/XX/XXXX"
-        location = marathon_meta.get('location', "Local Desconhecido") if marathon_meta else "Local Desconhecido"
-        # distance = marathon_meta.get('distance_km', "Distância Desconhecida") if marathon_meta else "Distância Desconhecida"
-
-
-        with cols[i]:
-            with st.container(border=True):
-                st.subheader("Dados Gerais")
-                st.caption(f"🗓️ {event_date} | 📍 {location}")
-                # st.caption(f"📏 {distance} km") # You can add distance if it's in your Marathons table and fetched
-                st.caption(f"🖼️ {card_data.get('images_count', 'N/A')} Imagens")
-                st.caption(f"👟 {card_data.get('shoes_count','N/A')} Tênis Detectados")
-                st.caption(f"👥 {card_data.get('persons_count', 'N/A')} Pessoas com Demografia")
-
-
-def render_executive_summary(data):
-    st.subheader("📝 Resumo Executivo (Agregado)")
+    # Extract basic info
+    marathon_name = marathon_data.get('marathon_name', 'Prova Desconhecida')
+    event_date = marathon_data.get('event_date', 'Data não informada')
+    location = marathon_data.get('location', 'Local não informado')
+    distance_km = marathon_data.get('distance_km')
     
-    leader_info = data["leader_brand_info"]
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric(label="Marca Líder", value=leader_info["name"], help=f"{leader_info['count']} tênis desta marca encontrados no total.", border=True)
-    with cols[1]:
-        st.metric(label="Participação da Marca Líder",
-                  value=f"{leader_info['percentage']:.1f}%",
-                  help=f"{data['unique_brands_count']} marcas diferentes encontradas no total." , border=True)
-    with cols[2]:
-        st.metric(label="Cobertura Amostral (Pessoas)",
-                  value=f"{data['persons_analyzed_count']} Pessoas",
-                  help=f"Total de pessoas com dados demográficos analisados nas provas selecionadas.",
-                  border=True)
-
-    cols2 = st.columns(2)
-    with cols2[0]:
-         st.metric(label="Marcas Reconhecidas",
-                   value=f"{data['unique_brands_count']} Marcas",
-                   help=f"{data['total_shoes_detected']} tênis no total analisados nas provas selecionadas.",
-                   border=True)
-    with cols2[1]:
-        st.metric(label="Margem de Erro",
-                  value="+- 5%",
-                  help="Margem de erro estimada com base na amostra de dados coletados.",
-                  border=True)
-
-    st.markdown("---")
-    insight_text = "Nenhum insight gerado (sem dados suficientes)."
-    if leader_info["name"] != "N/A" and leader_info['percentage'] > 0:
-        insight_text = f"""
-        ✨ **Insight-Chave (Agregado)**
+    # Extract metrics
+    total_participants = marathon_data.get('total_participants', 0)
+    total_brands = marathon_data.get('total_brands', 0)
+    leader_brand = marathon_data.get('leader_brand', {})
+    confidence_stats = marathon_data.get('confidence_stats', {})
+    positioning_rate = marathon_data.get('positioning_rate', 0)
+    
+    with st.container(border=True):
+        st.subheader(f"📊 {marathon_name}")
         
-        A marca **{leader_info["name"]}** demonstra uma presença significativa, capturando **{leader_info['percentage']:.1f}%** do share entre os tênis identificados nas provas selecionadas.
-        A análise detalhada por prova e demografia pode revelar nuances importantes.
-        """
-    st.info(insight_text)
-    st.markdown("---")
+        # Basic info
+        info_parts = []
+        if event_date and event_date != 'Data não informada':
+            info_parts.append(f"🗓️ {event_date}")
+        if location and location != 'Local não informado':
+            info_parts.append(f"📍 {location}")
+        if distance_km:
+            info_parts.append(f"📏 {distance_km}km")
+        
+        if info_parts:
+            st.caption(" | ".join(info_parts))
+        
+        # Metrics
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("👥 Participantes", total_participants)
+            st.metric("🏆 Marca Líder", leader_brand.get('name', 'N/A'))
+            
+        with col2:
+            st.metric("🏷️ Marcas Detectadas", total_brands)
+            if leader_brand.get('percentage'):
+                st.metric("📊 Participação Líder", f"{leader_brand['percentage']:.1f}%")
+        
+        # Additional stats
+        if confidence_stats.get('avg'):
+            st.caption(f"🎯 Confiança Média: {confidence_stats['avg']:.1f}")
+        
+        if positioning_rate:
+            st.caption(f"📍 Taxa de Posicionamento: {positioning_rate:.1f}%")
+
 
 def render_processing_stats(data):
     st.subheader("⚙️ Estatísticas de Processamento (Agregado)")
@@ -316,45 +302,102 @@ def render_processing_stats(data):
         st.metric("Data/Hora Processamento", "04/05/2025 22:00 (mock)", help="Tempo total: 8 horas (mock)", border=True)
     st.markdown("---")
 
-def render_brand_distribution_chart(brand_counts, highlight=None):
+def render_brand_distribution_chart(marathon_data: Dict[str, Any], highlight=None):
     """
-    Renders a bar chart showing brand distribution with percentages.
+    Renders a horizontal bar chart showing brand distribution with percentages.
+    Follows the visual design from the user's example.
     
     Args:
-        brand_counts: Series with brand counts
+        marathon_data: Dictionary containing marathon metrics from database
         highlight: List of brand names to highlight with a different color
     """
     st.subheader("📊 Distribuição de Marcas")
     
-    if brand_counts.empty:
-        st.caption("Nenhuma marca detectada para gerar o gráfico.")
+    brand_distribution = marathon_data.get('brand_distribution', {})
+    
+    if not brand_distribution:
+        st.info("📋 Nenhuma marca detectada para gerar o gráfico.")
         return
     
-    # Prepare data using the reusable function
-    sorted_counts = brand_counts.sort_values(ascending=False)
-    total = sorted_counts.sum()
+    # Convert to DataFrame and calculate percentages
+    total = sum(brand_distribution.values())
+    chart_data = []
     
-    chart_data = pd.DataFrame({
-        'Marca': sorted_counts.index,
-        'Percentual': (sorted_counts / total * 100).round(1)
-    })
+    for brand, count in sorted(brand_distribution.items(), key=lambda x: x[1], reverse=True):
+        percentage = (count / total * 100) if total > 0 else 0
+        chart_data.append({
+            'Marca': brand,
+            'Percentual': round(percentage, 1),
+            'Contagem': count
+        })
     
-    # Create highlight condition if needed
-    highlight_condition = None
-    if highlight and isinstance(highlight, list):
-        highlight_brands_str = ', '.join([f'"{brand}"' for brand in highlight])
-        highlight_condition = f"indexof([{highlight_brands_str}], datum.Marca) >= 0"
+    if not chart_data:
+        st.info("📋 Nenhum dado disponível para o gráfico.")
+        return
     
-    # Use the reusable chart builder
-    chart = create_bar_chart(
-        data=chart_data,
-        x_col='Percentual',
-        y_col='Marca',
-        title="",
-        highlight_condition=highlight_condition
+    df = pd.DataFrame(chart_data)
+    
+    # Define colors - highlight first brand (leader) with red/primary color
+    def get_bar_color(brand_name, index):
+        if index == 0:  # Leader brand gets primary color (red/coral)
+            return '#e74c3c'  # Red for leader
+        elif highlight and brand_name in highlight:
+            return '#f39c12'  # Orange for highlighted brands
+        else:
+            return '#3498db'  # Blue for others
+    
+    # Add color column to dataframe
+    df['color'] = [get_bar_color(row['Marca'], i) for i, row in df.iterrows()]
+    
+    # Create horizontal bar chart
+    chart = alt.Chart(df).mark_bar().encode(
+        x=alt.X('Percentual:Q', 
+                title='Percentual',
+                scale=alt.Scale(domain=[0, max(50, df['Percentual'].max() * 1.1)]),
+                axis=alt.Axis(format='.0f')),
+        y=alt.Y('Marca:N', 
+                title='Marca',
+                sort='-x',  # Sort by descending percentual
+                axis=alt.Axis(labelLimit=200)),
+        color=alt.Color('color:N', 
+                       scale=None,  # Use the exact colors we specified
+                       legend=None),
+        tooltip=[
+            alt.Tooltip('Marca:N', title='Marca'),
+            alt.Tooltip('Percentual:Q', title='Percentual (%)', format='.1f'),
+            alt.Tooltip('Contagem:Q', title='Participantes', format=',d')
+        ]
+    ).properties(
+        height=max(400, len(df) * 40),  # Dynamic height based on number of brands
+        width='container'
+    ).configure_axis(
+        labelFontSize=12,
+        titleFontSize=14
+    ).configure_view(
+        strokeWidth=0  # Remove border
     )
     
     st.altair_chart(chart, use_container_width=True)
+    
+    # Show summary metrics below the chart
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("🏆 Marca Líder", df.iloc[0]['Marca'] if len(df) > 0 else "N/A")
+    
+    with col2:
+        st.metric("📊 Participação Líder", f"{df.iloc[0]['Percentual']:.1f}%" if len(df) > 0 else "0%")
+    
+    with col3:
+        st.metric("🏷️ Total de Marcas", len(df))
+    
+    # Show detailed table in expander
+    with st.expander("📋 Dados Detalhados"):
+        # Format the dataframe for display
+        display_df = df[['Marca', 'Contagem', 'Percentual']].copy()
+        display_df['Percentual'] = display_df['Percentual'].apply(lambda x: f"{x:.1f}%")
+        display_df.columns = ['Marca', 'Participantes', 'Percentual']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
         
 def render_segmentation_chart(data_dist, title, demographic_col_name_for_legend):
     """
@@ -570,19 +613,16 @@ def render_individual_marathon_column(marathon_name: str, marathon_data: Dict[st
         render_top_brands_table(marathon_data["top_brands_all_selected"])
 
 
-# --- Main Report Function (Updated to focus on individual columns) ---
-
 def report_page_content_main(processed_metrics: Dict[str, Any], marathon_specific_data_for_cards: Dict[str, Any]) -> None:
     """
-    Main function to render marathon reports in individual columns only.
-    
-    Args:
-        processed_metrics: Dictionary of calculated metrics
-        marathon_specific_data_for_cards: Marathon-specific data for cards
+    Legacy function for backward compatibility.
     """
     if processed_metrics.get("total_images_selected", 0) == 0:
         st.warning("Nenhuma imagem nos dados selecionados para gerar o relatório.")
         return
+    
+    # For now, use legacy approach but recommend using render_optimized_marathon_report
+    st.info("💡 **Dica:** Esta visualização está sendo migrada para uma versão otimizada.")
     
     selected_marathon_names = list(processed_metrics.get("marathon_specific_data_for_cards", {}).keys())
     
@@ -590,12 +630,11 @@ def report_page_content_main(processed_metrics: Dict[str, Any], marathon_specifi
         st.warning("Nenhuma prova selecionada.")
         return
     
-    # Always display marathons in individual columns
-    cols = st.columns(len(selected_marathon_names))
-    
-    for i, marathon_name in enumerate(selected_marathon_names):
-        with cols[i]:
-            render_individual_marathon_column(marathon_name, processed_metrics)
+    # Display basic info
+    st.subheader("📊 Dados Agregados")
+    st.metric("Total de Participantes", processed_metrics.get("total_images_selected", 0))
+    st.metric("Marcas Detectadas", processed_metrics.get("unique_brands_count", 0))
+    st.metric("Marca Líder", processed_metrics.get("leader_brand_name", "N/A"))
 
 
 def render_pdf_preview_modal(processed_metrics, marathon_specific_data_for_cards):
@@ -1022,3 +1061,246 @@ def render_category_timeline_insights(timeline_data: pd.DataFrame, top_brands: l
     st.caption(f"""
     📊 **Cobertura dos Dados:** {len(categories)} categorias analisadas em {total_marathons} provas: {', '.join(categories)}
     """)
+
+def render_demographic_analysis(marathon_data: Dict[str, Any]):
+    """
+    Renders demographic analysis charts optimized for database data.
+    
+    Args:
+        marathon_data: Dictionary containing marathon metrics from database
+    """
+    st.subheader("👥 Análise Demográfica")
+    
+    gender_distribution = marathon_data.get('gender_distribution', {})
+    category_distribution = marathon_data.get('category_distribution', {})
+    
+    if not gender_distribution and not category_distribution:
+        st.info("📋 Dados demográficos não disponíveis.")
+        return
+    
+    # Gender distribution
+    if gender_distribution:
+        st.subheader("🚻 Distribuição por Gênero")
+        total_gender = sum(gender_distribution.values())
+        
+        gender_data = []
+        for gender, count in gender_distribution.items():
+            percentage = (count / total_gender * 100) if total_gender > 0 else 0
+            gender_data.append({
+                'Gênero': gender,
+                'Contagem': count,
+                'Percentual': round(percentage, 1)
+            })
+        
+        df_gender = pd.DataFrame(gender_data)
+        
+        # Create a horizontal bar chart for gender (consistent with brands)
+        gender_colors = {
+            'MASCULINO': '#3498db',  # Blue
+            'FEMININO': '#e91e63',   # Pink
+            'MALE': '#3498db',
+            'FEMALE': '#e91e63'
+        }
+        
+        # Add color column
+        df_gender['color'] = df_gender['Gênero'].map(
+            lambda x: gender_colors.get(x.upper(), '#95a5a6')
+        )
+        
+        gender_chart = alt.Chart(df_gender).mark_bar().encode(
+            x=alt.X('Percentual:Q', 
+                    title='Percentual (%)',
+                    scale=alt.Scale(domain=[0, 100]),
+                    axis=alt.Axis(format='.0f')),
+            y=alt.Y('Gênero:N', 
+                    title='Gênero',
+                    sort='-x',
+                    axis=alt.Axis(labelLimit=200)),
+            color=alt.Color('color:N', 
+                           scale=None,
+                           legend=None),
+            tooltip=[
+                alt.Tooltip('Gênero:N', title='Gênero'),
+                alt.Tooltip('Percentual:Q', title='Percentual (%)', format='.1f'),
+                alt.Tooltip('Contagem:Q', title='Participantes', format=',d')
+            ]
+        ).properties(
+            height=max(150, len(df_gender) * 40),
+            width='container'
+        ).configure_axis(
+            labelFontSize=12,
+            titleFontSize=14
+        ).configure_view(
+            strokeWidth=0
+        )
+        
+        st.altair_chart(gender_chart, use_container_width=True)
+        
+        # Show detailed table
+        display_df = df_gender[['Gênero', 'Contagem', 'Percentual']].copy()
+        display_df['Percentual'] = display_df['Percentual'].apply(lambda x: f"{x:.1f}%")
+        display_df.columns = ['Gênero', 'Participantes', 'Percentual']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    
+    # Category distribution
+    if category_distribution:
+        st.subheader("🏃 Distribuição por Categoria")
+        total_category = sum(category_distribution.values())
+        
+        category_data = []
+        for category, count in sorted(category_distribution.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / total_category * 100) if total_category > 0 else 0
+            category_data.append({
+                'Categoria': category,
+                'Contagem': count,
+                'Percentual': round(percentage, 1)
+            })
+        
+        df_category = pd.DataFrame(category_data)
+        
+        # Horizontal bar chart for categories following the same style
+        bar_chart = alt.Chart(df_category).mark_bar().encode(
+            x=alt.X('Percentual:Q', 
+                    title='Percentual (%)',
+                    scale=alt.Scale(domain=[0, max(50, df_category['Percentual'].max() * 1.1)]),
+                    axis=alt.Axis(format='.0f')),
+            y=alt.Y('Categoria:N', 
+                    title='Categoria',
+                    sort='-x',
+                    axis=alt.Axis(labelLimit=200)),
+            color=alt.value('#2ecc71'),  # Green color for categories
+            tooltip=[
+                alt.Tooltip('Categoria:N', title='Categoria'),
+                alt.Tooltip('Percentual:Q', title='Percentual (%)', format='.1f'),
+                alt.Tooltip('Contagem:Q', title='Participantes', format=',d')
+            ]
+        ).properties(
+            height=max(200, len(df_category) * 35),
+            width='container'
+        ).configure_axis(
+            labelFontSize=12,
+            titleFontSize=14
+        ).configure_view(
+            strokeWidth=0
+        )
+        
+        st.altair_chart(bar_chart, use_container_width=True)
+        
+        # Show detailed table
+        display_df = df_category.copy()
+        display_df['Percentual'] = display_df['Percentual'].apply(lambda x: f"{x:.1f}%")
+        display_df.columns = ['Categoria', 'Participantes', 'Percentual']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
+def render_executive_summary(marathon_data: Dict[str, Any]):
+    """
+    Renders executive summary optimized for database data.
+    
+    Args:
+        marathon_data: Dictionary containing marathon metrics from database
+    """
+    st.subheader("📝 Resumo Executivo")
+    
+    total_participants = marathon_data.get('total_participants', 0)
+    total_brands = marathon_data.get('total_brands', 0)
+    leader_brand = marathon_data.get('leader_brand', {})
+    confidence_stats = marathon_data.get('confidence_stats', {})
+    positioning_rate = marathon_data.get('positioning_rate', 0)
+    
+    # Key metrics
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            label="🏆 Marca Líder", 
+            value=leader_brand.get('name', 'N/A'),
+            help=f"{leader_brand.get('count', 0)} participantes usaram esta marca."
+        )
+    
+    with col2:
+        st.metric(
+            label="📊 Participação da Líder",
+            value=f"{leader_brand.get('percentage', 0):.1f}%",
+            help=f"De {total_participants} participantes analisados."
+        )
+    
+    with col3:
+        st.metric(
+            label="🏷️ Marcas Detectadas",
+            value=f"{total_brands} marcas",
+            help="Número total de marcas diferentes identificadas."
+        )
+    
+    # Additional metrics
+    col4, col5 = st.columns(2)
+    
+    with col4:
+        st.metric(
+            label="👥 Total de Participantes",
+            value=f"{total_participants}",
+            help="Número total de participantes analisados."
+        )
+    
+    with col5:
+        if confidence_stats.get('avg'):
+            st.metric(
+                label="🎯 Confiança Média",
+                value=f"{confidence_stats['avg']:.1f}",
+                help=f"Variação: {confidence_stats.get('min', 0):.1f} - {confidence_stats.get('max', 0):.1f}"
+            )
+        else:
+            st.metric(
+                label="📍 Taxa de Posicionamento",
+                value=f"{positioning_rate:.1f}%",
+                help="Percentual de participantes com posição definida."
+            )
+    
+    st.markdown("---")
+    
+    # Generate insights
+    if leader_brand.get('name') != 'N/A' and leader_brand.get('percentage', 0) > 0:
+        insight_text = f"""
+        ✨ **Insights Principais:**
+        
+        • A marca **{leader_brand['name']}** domina com {leader_brand['percentage']:.1f}% de participação
+        • Foram identificadas **{total_brands} marcas diferentes** entre {total_participants} participantes
+        """
+        
+        if confidence_stats.get('avg'):
+            insight_text += f"• Confiança média de detecção: **{confidence_stats['avg']:.1f}%**\n"
+        
+        if positioning_rate > 0:
+            insight_text += f"• Taxa de posicionamento: **{positioning_rate:.1f}%**\n"
+        
+        st.markdown(insight_text)
+    else:
+        st.info("📊 Dados insuficientes para gerar insights detalhados.")
+
+def render_optimized_marathon_report(marathon_data: Dict[str, Any]) -> None:
+    """
+    Main function to render marathon reports optimized for database data.
+    
+    Args:
+        marathon_data: Dictionary containing marathon metrics from database
+    """
+    if not marathon_data or marathon_data.get("total_participants", 0) == 0:
+        st.warning("⚠️ Nenhum dado disponível para gerar o relatório.")
+        return
+    
+    # Marathon info card
+    render_marathon_info_cards(marathon_data)
+    
+    # Executive summary
+    render_executive_summary(marathon_data)
+    
+    # Charts section
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Brand distribution chart
+        render_brand_distribution_chart(marathon_data)
+    
+    with col2:
+        # Demographic analysis
+        render_demographic_analysis(marathon_data)
