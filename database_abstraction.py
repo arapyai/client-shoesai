@@ -673,13 +673,14 @@ class DatabaseManager:
                         self.shoe_detections.c.brand.is_not(None)
                     )
                 ).group_by(self.images.c.category, self.shoe_detections.c.brand)
-                
+
                 category_results = conn.execute(category_stmt).fetchall()
-                
-                # Process category distribution
+                logger.info(f"Category query returned {len(category_results)} combinations")
+
+                # Process category distribution - CORRIGIDO
                 category_data = {}
                 for row in category_results:
-                    if row.category not in category_data:
+                    if row.brand not in category_data:
                         category_data[row.brand] = {}
                     category_data[row.brand][row.category] = row.count
                 

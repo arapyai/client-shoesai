@@ -55,14 +55,14 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
                         uploaded_file.seek(0) # Reset file pointer
                         json_content = uploaded_file.read().decode('latin-1') # Fallback
 
-                    json_data_raw = json.loads(json_content)
+                    #json_data_raw = json.loads(json_content)
                     
                     # The JSON is a dict of dicts, needs to be list of dicts
                     # Example: {'col1': {'0':'a', '1':'b'}, 'col2': {'0':1, '1':2}}
                     # to [{'col1':'a', 'col2':1}, {'col1':'b', 'col2':2}]
-                    df_temp = pd.DataFrame(json_data_raw)
-                    image_data_list_for_db = df_temp.to_dict(orient='records')
-
+                    #df_temp = pd.DataFrame(json_data_raw)
+                    #image_data_list_for_db = df_temp.to_dict(orient='records')
+                    image_data_list_for_db = pd.read_json(json_content, orient='records').to_dict(orient='records')
                     progress_bar.progress(30, text=f"Metadados salvos (ID: {marathon_id}). Processando imagens...")
                     db.insert_parsed_json_data(marathon_id, image_data_list_for_db) # This function now handles batching internally
                     progress_bar.progress(100, text="Importação concluída!")
