@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from data_processing import process_queried_data_for_report, process_multiple_marathons_efficiently
 from ui_components import (
     page_header_with_logout,
     report_page_content_main,
@@ -14,7 +13,7 @@ from ui_components import (
     render_individual_marathon_column,
     check_auth
 )
-from database_abstraction import get_marathon_list_from_db, get_data_for_selected_marathons_db
+from database_abstraction import db
 
 # --- Page Config ---
 st.set_page_config(layout="wide", page_title="Shoes AI - Relatórios")
@@ -25,7 +24,7 @@ user_id = check_auth()
 # --- Fetch Marathon List from DB for Selector ---
 @st.cache_data # Cache the list of marathons
 def fetch_marathon_options_from_db_cached():
-    return get_marathon_list_from_db()
+    return db.get_marathon_list_from_db()
 
 if 'MARATHON_OPTIONS_DB_CACHED' not in st.session_state:
     st.session_state.MARATHON_OPTIONS_DB_CACHED = fetch_marathon_options_from_db_cached()
@@ -49,11 +48,7 @@ if 'processed_report_data' not in st.session_state or \
     
     if initial_marathon_ids:
         # Use pre-computed metrics for initial load too
-        from database_abstraction import get_precomputed_marathon_metrics
-        st.session_state.processed_report_data = get_precomputed_marathon_metrics(initial_marathon_ids)
-    else: # No marathons selected or available yet
-        from data_processing import process_queried_data_for_report
-        st.session_state.processed_report_data = process_queried_data_for_report(pd.DataFrame(), pd.DataFrame())
+        st.session_state.processed_report_data = db.get_precomputed_marathon_metrics(initial_marathon_ids)
 
 if 'show_report_content_db' not in st.session_state:
     st.session_state.show_report_content_db = bool(st.session_state.selected_marathon_names_ui) and \
@@ -68,8 +63,7 @@ def get_individual_marathon_data_cached(marathon_id: int) -> dict:
     Cache individual marathon data to avoid reprocessing.
     Returns processed data for a single marathon using pre-computed metrics.
     """
-    from database_abstraction import get_precomputed_marathon_metrics
-    return get_precomputed_marathon_metrics([marathon_id])
+    return db.get_precomputed_marathon_metrics([marathon_id])
 
 def preprocess_individual_marathons(marathon_names: list) -> dict:
     """
@@ -86,10 +80,8 @@ def preprocess_individual_marathons(marathon_names: list) -> dict:
     
     # Use the new efficient individual metrics function
     with st.spinner("Carregando dados pré-calculados das provas..."):
-        from database_abstraction import get_individual_marathon_metrics
-        
         # Get all individual marathon metrics in a single database call
-        individual_data = get_individual_marathon_metrics(marathon_ids)
+        individual_data = db.get_individual_marathon_metrics(marathon_ids[0]) if marathon_ids else {}
     
     return individual_data
 
@@ -310,8 +302,7 @@ def report_page_db():
             if selected_ids:
                 with st.spinner("Atualizando relatório..."):
                     # Try to use pre-computed metrics first
-                    from database_abstraction import get_precomputed_marathon_metrics
-                    st.session_state.processed_report_data = get_precomputed_marathon_metrics(selected_ids)
+                    st.session_state.processed_report_data = db.get_precomputed_marathon_metrics(selected_ids)
                     st.session_state.show_report_content_db = True
             else:
                 st.warning("Nenhum ID de maratona válido encontrado para a seleção.")

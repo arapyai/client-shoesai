@@ -3,6 +3,7 @@ import json
 import pandas as pd
 from database_abstraction import db
 from ui_components import check_auth
+from csv_processing import load_and_validate_csv, generate_statistics, create_summary_dataframe
 st.set_page_config(layout="wide", page_title="Shoes AI - Importador")
 
 
@@ -13,7 +14,7 @@ from ui_components import page_header_with_logout
 
 # Display page header with logout button
 page_header_with_logout("📥 Importador de Dados de Provas", 
-                      "Faça o upload de um arquivo JSON contendo os dados da prova e preencha os metadados.",
+                      "Faça o upload de um arquivo CSV contendo os dados da prova e preencha os metadados.",
                       key_suffix="importer")
 
 with st.form("marathon_import_form", clear_on_submit=False): # Keep values on submit for now
@@ -24,8 +25,16 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
     distance_km_input = st.number_input("Distância (km)", min_value=0.0, value=0.0, step=0.1, format="%.1f", key="distance_importer")
     description = st.text_area("Descrição Adicional (Opcional)")
 
-    st.subheader("Arquivo de Dados JSON")
-    uploaded_file = st.file_uploader("Escolha um arquivo JSON com os dados da prova*", type=["json"], key="json_uploader")
+    st.subheader("Arquivo de Dados CSV")
+    st.info("📋 **Formato esperado do CSV:**\n"
+           "- `bib`: número do peito\n"
+           "- `position`: posição na categoria (? para não posicionado)\n"
+           "- `gender`: MASCULINO/FEMININO\n"
+           "- `run_category`: categoria da prova (5K, 10K, 21K, 42K, etc.)\n"
+           "- `shoe_brand`: marca do tênis\n"
+           "- `confidence`: nível de confiança da detecção")
+    
+    uploaded_file = st.file_uploader("Escolha um arquivo CSV com os dados da prova*", type=["csv"], key="csv_uploader")
 
     submitted_import = st.form_submit_button("Importar Dados da Prova")
         
@@ -33,60 +42,114 @@ with st.form("marathon_import_form", clear_on_submit=False): # Keep values on su
         if not marathon_name:
             st.error("O nome da prova é obrigatório.")
         elif not uploaded_file:
-            st.error("Por favor, faça o upload de um arquivo JSON.")
+            st.error("Por favor, faça o upload de um arquivo CSV.")
         else:
             progress_bar = st.progress(0, text="Iniciando importação...")
             try:
-                progress_bar.progress(10, text="Metadados da prova sendo salvos...")
+                progress_bar.progress(10, text="Validando e processando arquivo CSV...")
+                
+                # Carrega e valida o CSV
+                df_race_data = load_and_validate_csv(uploaded_file)
+                
+                progress_bar.progress(30, text="Gerando estatísticas...")
+                
+                # Gera estatísticas diretamente dos dados
+                race_statistics = generate_statistics(df_race_data, marathon_name)
+                
+                progress_bar.progress(50, text="Salvando metadados da prova...")
+                
+                # Salva apenas os metadados da prova no banco
                 marathon_id = db.add_marathon_metadata(
                     name=marathon_name,
                     event_date=str(event_date_input) if event_date_input else None,
                     location=location,
                     distance_km=float(distance_km_input) if distance_km_input > 0 else None,
                     description=description,
-                    original_json_filename=uploaded_file.name,
                     user_id=user_id
                 )
 
                 if marathon_id:
-                    try:
-                        json_content = uploaded_file.read().decode('utf-8-sig') # Try utf-8-sig first for BOM
-                    except UnicodeDecodeError:
-                        uploaded_file.seek(0) # Reset file pointer
-                        json_content = uploaded_file.read().decode('latin-1') # Fallback
-
-                    #json_data_raw = json.loads(json_content)
+                    progress_bar.progress(60, text="Salvando dados dos corredores...")
                     
-                    # The JSON is a dict of dicts, needs to be list of dicts
-                    # Example: {'col1': {'0':'a', '1':'b'}, 'col2': {'0':1, '1':2}}
-                    # to [{'col1':'a', 'col2':1}, {'col1':'b', 'col2':2}]
-                    #df_temp = pd.DataFrame(json_data_raw)
-                    #image_data_list_for_db = df_temp.to_dict(orient='records')
-                    image_data_list_for_db = pd.read_json(json_content, orient='records').to_dict(orient='records')
-                    progress_bar.progress(30, text=f"Metadados salvos (ID: {marathon_id}). Processando imagens...")
-                    db.insert_parsed_json_data(marathon_id, image_data_list_for_db) # This function now handles batching internally
-                    progress_bar.progress(100, text="Importação concluída!")
-                    st.success(f"Prova '{marathon_name}' e seus dados importados com sucesso! ID da Prova: {marathon_id}")
+                    # Prepara os dados dos corredores para inserção em lote
+                    runners_data = []
+                    for _, row in df_race_data.iterrows():
+                        runner_data = {
+                            'bib': row.get('bib'),
+                            'position': row.get('position') if row.get('position') != '?' else None,
+                            'shoe_brand': row.get('shoe_brand'),
+                            'shoe_model': row.get('shoe_model'),
+                            'gender': row.get('gender'),
+                            'run_category': row.get('run_category'),
+                            'confidence': row.get('confidence')
+                        }
+                        runners_data.append(runner_data)
                     
-                    # Clear relevant session states to force reload on report page
-                    for key_to_clear in ['df_all_marathons_raw', 'df_flat_detections', 'processed_report_data', 
-                                         'selected_marathon_names_ui', 'MARATHON_OPTIONS_DB_CACHED']:
-                        if key_to_clear in st.session_state:
-                            del st.session_state[key_to_clear]
-                    # Also clear Streamlit's function caches if you have them on data loading functions
-                    st.cache_data.clear() # Clears all @st.cache_data
-
-                    # To reset form fields after successful submission:
-                    # This is a bit hacky, but can work by forcing a rerun and clearing specific states
-                    # st.session_state.marathon_import_form_submitted_once = True 
-                    # This requires more complex state management to truly clear the form if clear_on_submit=False
-                    # For now, the user can manually clear or just knows it's submitted.
+                    # Insere os dados dos corredores em lote
+                    successful_runners, failed_runners = db.add_marathon_runners_bulk(marathon_id, runners_data)
+                    
+                    progress_bar.progress(80, text="Salvando estatísticas calculadas...")
+                    
+                    # Salva as estatísticas pré-calculadas no banco
+                    stats_saved = db.save_race_statistics(marathon_id, race_statistics)
+                    
+                    if stats_saved:
+                        progress_bar.progress(100, text="Importação concluída!")
+                        
+                        # Exibe resumo da importação
+                        st.success(f"✅ Prova '{marathon_name}' importada com sucesso! ID da Prova: {marathon_id}")
+                        
+                        # Mostra informações sobre a importação dos corredores
+                        if failed_runners > 0:
+                            st.warning(f"⚠️ {successful_runners} corredores importados com sucesso, {failed_runners} falharam.")
+                        else:
+                            st.info(f"📊 {successful_runners} corredores importados com sucesso!")
+                        
+                        # Mostra estatísticas resumidas
+                        with st.expander("📊 Resumo das Estatísticas Importadas", expanded=True):
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Total de Participantes", race_statistics['total_participants'])
+                            with col2:
+                                st.metric("Total de Marcas", race_statistics['total_brands'])
+                            with col3:
+                                st.metric("Marca Líder", race_statistics['leader_brand']['name'])
+                            with col4:
+                                st.metric("Confiança Média", f"{race_statistics['avg_confidence']:.2f}")
+                            
+                            # Mostra preview dos dados
+                            st.subheader("Preview dos Dados")
+                            st.dataframe(df_race_data.head(10), use_container_width=True)
+                            
+                            # Top 5 marcas
+                            st.subheader("Top 5 Marcas")
+                            top_brands_data = []
+                            for i, (brand, count) in enumerate(list(race_statistics['top_brands'].items())[:5], 1):
+                                percentage = round((count / race_statistics['total_participants']) * 100, 2)
+                                top_brands_data.append({
+                                    'Posição': i,
+                                    'Marca': brand,
+                                    'Participantes': count,
+                                    'Percentual': f"{percentage}%"
+                                })
+                            st.dataframe(pd.DataFrame(top_brands_data), use_container_width=True, hide_index=True)
+                        
+                        # Clear relevant session states to force reload on report page
+                        for key_to_clear in ['df_all_marathons_raw', 'df_flat_detections', 'processed_report_data', 
+                                             'selected_marathon_names_ui', 'MARATHON_OPTIONS_DB_CACHED']:
+                            if key_to_clear in st.session_state:
+                                del st.session_state[key_to_clear]
+                        st.cache_data.clear()
+                    else:
+                        st.error("Erro ao salvar estatísticas no banco de dados.")
+                        progress_bar.empty()
                 else:
                     st.error(f"Falha ao adicionar metadados da prova. A prova '{marathon_name}' já pode existir ou ocorreu um erro no banco de dados.")
                     progress_bar.empty()
 
-            except json.JSONDecodeError:
-                st.error("Arquivo JSON inválido. Por favor, verifique o formato do arquivo.")
+            except ValueError as ve:
+                st.error(f"Erro de validação: {ve}")
                 progress_bar.empty()
             except Exception as e:
                 st.error(f"Ocorreu um erro durante a importação: {e}")
@@ -112,7 +175,7 @@ if not existing_marathons_df.empty:
     # Display marathons in an organized way with delete buttons
     for index, marathon in existing_marathons_df.iterrows():
         with st.container(border=True):
-            col_info, col_calculate, col_remove = st.columns([4, 1,1])
+            col_info, col_remove = st.columns([5, 1])
             
             with col_info:
                 st.write(f"**{marathon['name']}**")
@@ -127,35 +190,21 @@ if not existing_marathons_df.empty:
                     upload_date = str(marathon['upload_timestamp']).split()[0]
                     details.append(f"📥 Importado em: {upload_date}")
                 
-                #add summary of metrics get from database
-                metrics = db.get_precomputed_marathon_metrics([marathon['marathon_id']])
-                if metrics:
-                    details.append(f"📊 Imagens: {metrics.get('total_images_selected', 0)} | "
-                                   f"Calçados Detectados: {metrics.get('total_shoes_detected', 0)} | "
-                                   f"Pessoas Analisadas: {metrics.get('persons_analyzed_count', 0)}")
-                else:
-                    details.append("📊 Métricas não calculadas ainda.")
+                # Get summary metrics from stored statistics
+                try:
+                    metrics = db.get_precomputed_marathon_metrics([marathon['marathon_id']])
+                    if metrics:
+                        details.append(f"📊 Participantes: {metrics.get('total_shoes_detected', 0)} | "
+                                       f"Marcas: {metrics.get('unique_brands_count', 0)} | "
+                                       f"Marca Líder: {metrics.get('leader_brand_name', 'N/A')}")
+                    else:
+                        details.append("📊 Métricas não disponíveis.")
+                except:
+                    details.append("📊 Erro ao carregar métricas.")
                 
                 if details:
                     st.caption(" | ".join(details))
             
-            with col_calculate:
-                #recalcular as métrocas
-                if st.button(
-                    "🔄 Recalcular Métricas", 
-                    key=f"recalculate_metrics_{marathon['marathon_id']}", 
-                    help="Recalcular as métricas para esta prova",
-                    type="primary",
-                    use_container_width=True
-                ):
-                    # Trigger recalculation logic
-                    try:
-                        db.calculate_and_store_marathon_metrics(marathon['marathon_id'])
-                        st.success(f"Métricas calculadas com sucesso para a prova '{marathon['name']}'!")
-                    except Exception as e:
-                        st.error(f"Erro ao recalcular métricas: {e}")
-                        import traceback
-                        st.error(traceback.format_exc())
             with col_remove:
                 # Add delete button for each marathon
                 if st.button(

@@ -74,74 +74,22 @@ class DatabaseManager:
             Column('location', String(255)),
             Column('distance_km', Float),
             Column('description', Text),
-            Column('original_json_filename', String(255)),
             Column('uploaded_by_user_id', Integer, ForeignKey('users.user_id')),
             Column('upload_timestamp', DateTime, default=datetime.now)
         )
         
-        # Marathon Metrics table
-        self.marathon_metrics = Table(
-            'marathon_metrics', self.metadata,
-            Column('metric_id', Integer, primary_key=True, autoincrement=True),
-            Column('marathon_id', Integer, ForeignKey('marathons.marathon_id', ondelete='CASCADE'), unique=True, nullable=False),
-            Column('total_images', Integer, default=0),
-            Column('total_shoes_detected', Integer, default=0),
-            Column('total_persons_with_demographics', Integer, default=0),
-            Column('unique_brands_count', Integer, default=0),
-            Column('leader_brand_name', Text),
-            Column('leader_brand_count', Integer, default=0),
-            Column('leader_brand_percentage', Float, default=0.0),
-            Column('brand_counts_json', Text),
-            Column('gender_distribution_json', Text),
-            Column('race_distribution_json', Text),
-            Column('category_distribution_json', Text),
-            Column('top_brands_json', Text),
-            Column('last_calculated', DateTime, default=datetime.now)
-        )
-        
-        # Images table
-        self.images = Table(
-            'images', self.metadata,
-            Column('image_id', Integer, primary_key=True, autoincrement=True),
-            Column('marathon_id', Integer, ForeignKey('marathons.marathon_id'), nullable=False),
-            Column('filename', String(255), nullable=False),
-            Column('category', String(100)),
-            Column('original_width', Integer),
-            Column('original_height', Integer),
-            Column('bbox', String(100), nullable=True),  # Store bbox as JSON string
-            UniqueConstraint('marathon_id', 'filename', name='uq_marathon_filename')
-        )
-        
-        # Shoe Detections table
-        self.shoe_detections = Table(
-            'shoe_detections', self.metadata,
-            Column('detection_id', Integer, primary_key=True, autoincrement=True),
-            Column('image_id', Integer, ForeignKey('images.image_id'), nullable=False),
-            Column('brand', String(100)),
-            Column('probability', Float),
-            Column('confidence', Float),
-            Column('bbox_x1', Float),
-            Column('bbox_y1', Float),
-            Column('bbox_x2', Float),
-            Column('bbox_y2', Float)
-        )
-        
-        # Person Demographics table
-        self.person_demographics = Table(
-            'person_demographics', self.metadata,
-            Column('demographic_id', Integer, primary_key=True, autoincrement=True),
-            Column('image_id', Integer, ForeignKey('images.image_id'), nullable=False),
-            Column('gender_label', String(50)),
-            Column('gender_prob', Float),
-            Column('age_label', String(50)),
-            Column('age_prob', Float),
-            Column('race_label', String(50)),
-            Column('race_prob', Float),
-            Column('person_bbox_x1', Float),
-            Column('person_bbox_y1', Float),
-            Column('person_bbox_x2', Float),
-            Column('person_bbox_y2', Float)
-        )
+        # Marathon runners table
+        self.marathon_runners = Table(
+            'marathon_runners', self.metadata,
+            Column('id', Integer, primary_key=True, autoincrement=True),
+            Column('marathon_id', Integer, ForeignKey('marathons.marathon_id')),
+            Column('bib', Integer),
+            Column('position', Integer),
+            Column('shoe_brand', String(100)),
+            Column('shoe_model', String(100)),
+            Column('gender', String(10)),
+            Column('run_category', String(50)),
+            Column('confidence', Float))
     
     @contextmanager
     def get_connection(self):
@@ -177,16 +125,6 @@ class DatabaseManager:
         with self.get_connection() as conn:
             result = conn.execute(text(query), params or {})
             return [dict(row._mapping) for row in result.fetchall()]
-    
-    def execute_query_df(self, query: str, params: Optional[List] = None) -> pd.DataFrame:
-        """Execute a query and return results as pandas DataFrame."""
-        try:
-            if not self.engine:
-                raise RuntimeError("Database engine not initialized")
-            return pd.read_sql_query(query, self.engine, params=params)
-        except Exception as e:
-            logger.error(f"Failed to execute query as DataFrame: {e}")
-            raise
     
     # User Management Methods
     def add_user(self, email: str, password: str, is_admin: bool = False) -> bool:
@@ -325,7 +263,7 @@ class DatabaseManager:
     # Marathon Management Methods
     def add_marathon_metadata(self, name: str, event_date: Optional[str], location: Optional[str], 
                             distance_km: Optional[float], description: Optional[str], 
-                            original_json_filename: Optional[str], user_id: int) -> Optional[int]:
+                            user_id: int) -> Optional[int]:
         """Add marathon metadata to the database."""
         try:
             with self.get_connection() as conn:
@@ -335,7 +273,6 @@ class DatabaseManager:
                     location=location,
                     distance_km=distance_km,
                     description=description,
-                    original_json_filename=original_json_filename,
                     uploaded_by_user_id=user_id,
                     upload_timestamp=datetime.now()
                 )
@@ -355,896 +292,513 @@ class DatabaseManager:
             logger.error(f"Failed to add marathon metadata: {e}")
             return None
 
-    def insert_parsed_json_data(
-        self,
-        marathon_id: int,
-        parsed_json_data_list: List[Dict],
-        batch_size: int = 500,
-    ) -> bool:
-        """Insert parsed JSON data into the database in batches.
-
-        Breaking large imports into smaller batches avoids long-running
-        transactions and reduces memory usage. Duplicate filenames are
-        skipped automatically by using a cache populated with existing
-        images as well as those inserted in previous batches.
-        """
-
-        if not parsed_json_data_list:
-            logger.warning("No data provided for insertion")
-            return True
-
+    def add_marathon_runner(self, marathon_id: int, bib: Optional[int], position: Optional[int],
+                           shoe_brand: Optional[str], shoe_model: Optional[str], 
+                           gender: Optional[str], run_category: Optional[str], 
+                           confidence: Optional[float]) -> bool:
+        """Add a single marathon runner's data to the database."""
         try:
-            # Build cache of existing images for this marathon
             with self.get_connection() as conn:
-                existing_stmt = select(self.images.c.image_id, self.images.c.filename).where(
-                    self.images.c.marathon_id == marathon_id
+                stmt = insert(self.marathon_runners).values(
+                    marathon_id=marathon_id,
+                    bib=bib,
+                    position=position,
+                    shoe_brand=shoe_brand,
+                    shoe_model=shoe_model,
+                    gender=gender,
+                    run_category=run_category,
+                    confidence=confidence
                 )
-                image_id_cache = {
-                    row.filename: row.image_id for row in conn.execute(existing_stmt)
-                }
-
-            logger.info(
-                f"Found {len(image_id_cache)} existing images for marathon {marathon_id} in cache"
-            )
-
-            total_processed = 0
-            # Process data in batches to keep transactions small
-            for batch_start in range(0, len(parsed_json_data_list), batch_size):
-                batch = parsed_json_data_list[batch_start : batch_start + batch_size]
-
-                with self.engine.begin() as conn:
-                    demographics_records: List[Dict] = []
-                    shoes_records: List[Dict] = []
-
-                    for record in batch:
-                        filename = record.get("filename")
-                        if not filename:
-                            logger.warning("Skipping record with no filename")
-                            continue
-
-                        if filename in image_id_cache:
-                            image_id = image_id_cache[filename]
-                        else:
-                            result = conn.execute(
-                                insert(self.images).values(
-                                    marathon_id=marathon_id,
-                                    filename=filename,
-                                    original_width=record.get("original_width"),
-                                    original_height=record.get("original_height"),
-                                    category=record.get("folder"),
-                                    bbox= json.dumps(record.get("bbox", []), ensure_ascii=False) if record.get("bbox") else None
-                                )
-                            )
-                            image_id = result.inserted_primary_key[0]
-                            image_id_cache[filename] = image_id
-
-                        demo = record.get("demographic")
-                        if demo:
-                            demographics_records.append(
-                                self._prepare_demographic_record(image_id, demo)
-                            )
-
-                        for shoe in record.get("shoes", []):
-                            if isinstance(shoe, dict):
-                                shoes_records.append(
-                                    self._prepare_shoe_record(image_id, shoe)
-                                )
-
-                    if demographics_records:
-                        conn.execute(insert(self.person_demographics), demographics_records)
-                    if shoes_records:
-                        conn.execute(insert(self.shoe_detections), shoes_records)
-
-                total_processed += len(batch)
-                logger.info(
-                    f"Processed batch {(batch_start // batch_size) + 1}: {len(batch)} records"
-                )
-
-            logger.info(
-                f"Successfully processed marathon {marathon_id}: {len(image_id_cache)} images total"
-            )
-            return True
-
+                conn.execute(stmt)
+                conn.commit()
+                logger.info(f"Successfully added runner data for marathon {marathon_id}")
+                return True
         except Exception as e:
-            logger.error(f"Failed to insert parsed JSON data: {e}")
+            logger.error(f"Failed to add marathon runner: {e}")
             return False
-
-    def _prepare_demographic_record(self, image_id: int, demographic_data: Dict) -> Dict:
-        """Transform demographic JSON data into a record for bulk insert."""
-        gender = demographic_data.get('gender', {})
-        age = demographic_data.get('age', {})
-        race = demographic_data.get('race', {})
-        bbox = demographic_data.get('bbox', [None, None, None, None])
-
-        return {
-            'image_id': image_id,
-            'gender_label': gender.get('label'),
-            'gender_prob': gender.get('prob'),
-            'age_label': age.get('label'),
-            'age_prob': age.get('prob'),
-            'race_label': race.get('label'),
-            'race_prob': race.get('prob'),
-            'person_bbox_x1': bbox[0] if len(bbox) > 0 else None,
-            'person_bbox_y1': bbox[1] if len(bbox) > 1 else None,
-            'person_bbox_x2': bbox[2] if len(bbox) > 2 else None,
-            'person_bbox_y2': bbox[3] if len(bbox) > 3 else None,
-        }
-
-    def _prepare_shoe_record(self, image_id: int, shoe_data: Dict) -> Dict:
-        """Transform shoe detection JSON data into a record for bulk insert."""
-        label = shoe_data.get('label')
-        brand = label[0] if isinstance(label, list) and label else label
-
-        prob_data = shoe_data.get('prob')
-        prob = prob_data[0] if isinstance(prob_data, list) and prob_data else prob_data
-
-        bbox_data = shoe_data.get('bbox')
-        if isinstance(bbox_data, list) and bbox_data:
-            bbox_list = bbox_data[0] if isinstance(bbox_data[0], list) else bbox_data
-        else:
-            bbox_list = [None, None, None, None]
-
-        return {
-            'image_id': image_id,
-            'brand': brand,
-            'probability': prob,
-            'confidence': shoe_data.get('confidence'),
-            'bbox_x1': bbox_list[0] if len(bbox_list) > 0 else None,
-            'bbox_y1': bbox_list[1] if len(bbox_list) > 1 else None,
-            'bbox_x2': bbox_list[2] if len(bbox_list) > 2 else None,
-            'bbox_y2': bbox_list[3] if len(bbox_list) > 3 else None,
-        }
-
-    def delete_marathon_by_id(self, marathon_id: int) -> bool:
+    
+    def add_marathon_runners_bulk(self, marathon_id: int, runners_data: List[Dict[str, Any]]) -> Tuple[int, int]:
         """
-        Delete a marathon and all associated data (images, shoe detections, demographics, metrics).
+        Add multiple marathon runners' data to the database in bulk.
+        
+        Args:
+            marathon_id: ID of the marathon
+            runners_data: List of dictionaries containing runner data
+            
+        Returns:
+            Tuple of (successful_inserts, failed_inserts)
         """
-        try:
-            with self.get_connection() as conn:
-                trans = conn.begin()
-                try:
-                    # Check if marathon exists
-                    marathon_check = select(self.marathons.c.name).where(self.marathons.c.marathon_id == marathon_id)
-                    marathon = conn.execute(marathon_check).fetchone()
-                    
-                    if not marathon:
-                        logger.error(f"Marathon with ID {marathon_id} not found")
-                        return False
-                    
-                    marathon_name = marathon.name
-                    logger.info(f"Deleting marathon '{marathon_name}' (ID: {marathon_id})...")
-                    
-                    # Get all image IDs for this marathon
-                    image_ids_stmt = select(self.images.c.image_id).where(self.images.c.marathon_id == marathon_id)
-                    image_ids = [row.image_id for row in conn.execute(image_ids_stmt).fetchall()]
-                    
-                    if image_ids:
-                        # Delete shoe detections
-                        delete_shoes = delete(self.shoe_detections).where(self.shoe_detections.c.image_id.in_(image_ids))
-                        conn.execute(delete_shoes)
+        successful = 0
+        failed = 0
+        
+        # Process data in smaller batches to avoid transaction issues
+        batch_size = 100
+        
+        for i in range(0, len(runners_data), batch_size):
+            batch = runners_data[i:i + batch_size]
+            
+            try:
+                with self.get_connection() as conn:
+                    trans = conn.begin()
+                    try:
+                        for runner_data in batch:
+                            # Clean and validate data
+                            cleaned_data = self._clean_runner_data(runner_data, marathon_id)
+                            if cleaned_data:
+                                stmt = insert(self.marathon_runners).values(**cleaned_data)
+                                conn.execute(stmt)
+                                successful += 1
+                            else:
+                                failed += 1
                         
-                        # Delete person demographics
-                        delete_demographics = delete(self.person_demographics).where(self.person_demographics.c.image_id.in_(image_ids))
-                        conn.execute(delete_demographics)
-                    
-                    # Delete images
-                    delete_images = delete(self.images).where(self.images.c.marathon_id == marathon_id)
-                    conn.execute(delete_images)
-                    
-                    # Delete marathon metrics
-                    delete_metrics = delete(self.marathon_metrics).where(self.marathon_metrics.c.marathon_id == marathon_id)
-                    conn.execute(delete_metrics)
-                    
-                    # Finally delete the marathon itself
-                    delete_marathon = delete(self.marathons).where(self.marathons.c.marathon_id == marathon_id)
-                    conn.execute(delete_marathon)
-                    
-                    trans.commit()
-                    logger.info(f"Successfully deleted marathon '{marathon_name}' and all associated data")
-                    return True
-                    
-                except Exception as e:
-                    trans.rollback()
-                    logger.error(f"Error deleting marathon {marathon_id}: {e}")
-                    return False
-                    
+                        trans.commit()
+                        logger.debug(f"Batch {i//batch_size + 1}: {len(batch)} runners processed")
+                        
+                    except Exception as e:
+                        trans.rollback()
+                        logger.warning(f"Batch {i//batch_size + 1} failed: {e}")
+                        failed += len(batch)
+                        
+            except Exception as e:
+                logger.error(f"Failed to process batch {i//batch_size + 1}: {e}")
+                failed += len(batch)
+        
+        logger.info(f"Bulk insert completed: {successful} successful, {failed} failed")
+        return successful, failed
+    
+    def _clean_runner_data(self, runner_data: Dict[str, Any], marathon_id: int) -> Optional[Dict[str, Any]]:
+        """Clean and validate runner data before insertion."""
+        try:
+            # Ensure marathon_id is included
+            cleaned: Dict[str, Any] = {'marathon_id': marathon_id}
+            
+            # Convert pandas types to Python native types and clean data
+            if 'bib' in runner_data and runner_data['bib'] is not None:
+                cleaned['bib'] = int(runner_data['bib']) if str(runner_data['bib']).strip() not in ['', '?', 'nan'] else None
+            
+            if 'position' in runner_data and runner_data['position'] is not None:
+                pos_str = str(runner_data['position']).strip()
+                if pos_str not in ['', '?', 'nan', '-']:
+                    try:
+                        cleaned['position'] = int(pos_str)
+                    except (ValueError, TypeError):
+                        cleaned['position'] = None
+                else:
+                    cleaned['position'] = None
+            
+            if 'shoe_brand' in runner_data and runner_data['shoe_brand'] is not None:
+                brand = str(runner_data['shoe_brand']).strip()
+                cleaned['shoe_brand'] = brand if brand not in ['', '?', 'nan'] else None
+            
+            if 'shoe_model' in runner_data and runner_data['shoe_model'] is not None:
+                model = str(runner_data['shoe_model']).strip()
+                cleaned['shoe_model'] = model if model not in ['', '?', 'nan'] else None
+            
+            if 'gender' in runner_data and runner_data['gender'] is not None:
+                gender = str(runner_data['gender']).strip().upper()
+                cleaned['gender'] = gender if gender not in ['', '?', 'NAN'] else None
+            
+            if 'run_category' in runner_data and runner_data['run_category'] is not None:
+                category = str(runner_data['run_category']).strip()
+                cleaned['run_category'] = category if category not in ['', '?', 'nan'] else None
+            
+            if 'confidence' in runner_data and runner_data['confidence'] is not None:
+                try:
+                    confidence = float(runner_data['confidence'])
+                    # Limit confidence to reasonable values (0-100)
+                    if 0 <= confidence <= 100:
+                        cleaned['confidence'] = confidence
+                    else:
+                        cleaned['confidence'] = None
+                except (ValueError, TypeError):
+                    cleaned['confidence'] = None
+            
+            return cleaned
+            
         except Exception as e:
-            logger.error(f"Failed to delete marathon: {e}")
+            logger.warning(f"Failed to clean runner data: {e}")
+            return None
+    
+    def get_marathon_runners(self, marathon_id: int) -> List[Dict[str, Any]]:
+        """Get all runners data for a specific marathon."""
+        try:
+            with self.get_connection() as conn:
+                stmt = select(self.marathon_runners).where(
+                    self.marathon_runners.c.marathon_id == marathon_id
+                ).order_by(self.marathon_runners.c.position)
+                
+                result = conn.execute(stmt).fetchall()
+                return [
+                    {
+                        "id": row.id,
+                        "marathon_id": row.marathon_id,
+                        "bib": row.bib,
+                        "position": row.position,
+                        "shoe_brand": row.shoe_brand,
+                        "shoe_model": row.shoe_model,
+                        "gender": row.gender,
+                        "run_category": row.run_category,
+                        "confidence": row.confidence
+                    }
+                    for row in result
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get marathon runners: {e}")
+            return []
+    
+    def delete_marathon_runners(self, marathon_id: int) -> bool:
+        """Delete all runners data for a specific marathon."""
+        try:
+            with self.get_connection() as conn:
+                stmt = delete(self.marathon_runners).where(
+                    self.marathon_runners.c.marathon_id == marathon_id
+                )
+                conn.execute(stmt)
+                conn.commit()
+                logger.info(f"Deleted all runners data for marathon {marathon_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete marathon runners: {e}")
             return False
-
-    def calculate_and_store_marathon_metrics(self, marathon_id: int) -> None:
+    
+    def save_race_statistics(self, marathon_id: int, race_statistics: Dict[str, Any]) -> bool:
         """
-        Calculate and store pre-computed metrics for a marathon using SQLAlchemy Core.
+        Save race statistics as JSON in the marathon description field or a separate statistics table.
+        For now, we'll append it to the description field.
         """
         try:
-            logger.info(f"Starting metrics calculation for marathon {marathon_id}")
+            with self.get_connection() as conn:
+                # Get current description
+                stmt = select(self.marathons.c.description).where(
+                    self.marathons.c.marathon_id == marathon_id
+                )
+                result = conn.execute(stmt).fetchone()
+                
+                current_description = result.description if result and result.description else ""
+                
+                # Convert numpy/pandas types to Python native types for JSON serialization
+                cleaned_stats = self._clean_statistics_for_json(race_statistics)
+                
+                # Create statistics section
+                stats_json = json.dumps(cleaned_stats, indent=2, ensure_ascii=False, default=str)
+                statistics_section = f"\n\n--- ESTATÍSTICAS AUTOMÁTICAS ---\n{stats_json}"
+                
+                # Update description with statistics
+                updated_description = current_description + statistics_section
+                
+                update_stmt = update(self.marathons).where(
+                    self.marathons.c.marathon_id == marathon_id
+                ).values(description=updated_description)
+                
+                conn.execute(update_stmt)
+                conn.commit()
+                logger.info(f"Successfully saved race statistics for marathon {marathon_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Failed to save race statistics: {e}")
+            return False
+    
+    def _clean_statistics_for_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean statistics data to make it JSON serializable."""
+        try:
+            import numpy as np
+        except ImportError:
+            np = None
+        
+        def convert_value(value):
+            # Handle numpy/pandas numeric types
+            if hasattr(value, 'item'):  # numpy scalars
+                return value.item()
+            elif np and hasattr(np, 'integer') and isinstance(value, np.integer):
+                return int(value)
+            elif np and hasattr(np, 'floating') and isinstance(value, np.floating):
+                return float(value)
+            elif isinstance(value, dict):
+                return {k: convert_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [convert_value(v) for v in value]
+            else:
+                return value
+        
+        result = convert_value(stats)
+        # Ensure we return a dict
+        if isinstance(result, dict):
+            return result
+        else:
+            return {"data": result}
+    
+    def get_data_for_selected_marathons_db(self, marathon_ids: List[int]) -> Tuple[Any, Any]:
+        """
+        Get marathon and runner data for selected marathon IDs.
+        
+        Args:
+            marathon_ids: List of marathon IDs to fetch data for
+            
+        Returns:
+            Tuple of (marathons_df, runners_df)
+        """
+        try:
+            import pandas as pd
             
             with self.get_connection() as conn:
-                # 1. Count images directly
-                images_stmt = select(func.count(self.images.c.image_id.distinct())).where(
-                    self.images.c.marathon_id == marathon_id
+                # Get marathon metadata
+                marathons_query = select(self.marathons).where(
+                    self.marathons.c.marathon_id.in_(marathon_ids)
                 )
-                total_images = conn.execute(images_stmt).scalar() or 0
+                marathons_df = pd.read_sql(marathons_query, conn)
                 
-                # 2. Count shoes directly  
-                shoes_stmt = select(func.count(self.shoe_detections.c.detection_id)).select_from(
-                    self.shoe_detections.join(self.images, self.shoe_detections.c.image_id == self.images.c.image_id)
-                ).where(self.images.c.marathon_id == marathon_id)
-                total_shoes = conn.execute(shoes_stmt).scalar() or 0
-                
-                # 3. Count persons with demographics directly
-                demographics_stmt = select(func.count(self.person_demographics.c.demographic_id)).select_from(
-                    self.person_demographics.join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
-                ).where(self.images.c.marathon_id == marathon_id)
-                total_persons = conn.execute(demographics_stmt).scalar() or 0
-                
-                # 4. Get brand counts directly
-                brand_counts_stmt = select(
-                    self.shoe_detections.c.brand,
-                    func.count().label('count')
-                ).select_from(
-                    self.shoe_detections.join(self.images, self.shoe_detections.c.image_id == self.images.c.image_id)
-                ).where(
-                    and_(
-                        self.images.c.marathon_id == marathon_id,
-                        self.shoe_detections.c.brand.is_not(None)
-                    )
-                ).group_by(self.shoe_detections.c.brand).order_by(func.count().desc())
-                
-                brand_results = conn.execute(brand_counts_stmt).fetchall()
-                
-                # Process brand counts
-                brand_counts_dict = {row.brand: row.count for row in brand_results}
-                unique_brands = len(brand_counts_dict)
-                
-                # Calculate leader brand
-                leader_name = "N/A"
-                leader_count = 0
-                leader_percentage = 0.0
-                
-                if brand_counts_dict:
-                    leader_name = max(brand_counts_dict, key=brand_counts_dict.get)
-                    leader_count = brand_counts_dict[leader_name]
-                    leader_percentage = (leader_count / total_shoes * 100) if total_shoes > 0 else 0.0
-                
-                # 5. Get gender distribution
-                gender_stmt = select(
-                    self.person_demographics.c.gender_label,
-                    self.shoe_detections.c.brand,
-                    func.count().label('count')
-                ).select_from(
-                    self.person_demographics
-                    .join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
-                    .join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
-                ).where(
-                    and_(
-                        self.images.c.marathon_id == marathon_id,
-                        self.person_demographics.c.gender_label.is_not(None),
-                        self.shoe_detections.c.brand.is_not(None)
-                    )
-                ).group_by(self.person_demographics.c.gender_label, self.shoe_detections.c.brand)
-                
-                gender_results = conn.execute(gender_stmt).fetchall()
-                
-                # Process gender distribution
-                gender_data = {}
-                for row in gender_results:
-                    if row.brand not in gender_data:
-                        gender_data[row.brand] = {}
-                    gender_data[row.brand][row.gender_label] = row.count
-                
-                # 6. Get race distribution  
-                race_stmt = select(
-                    self.person_demographics.c.race_label,
-                    self.shoe_detections.c.brand,
-                    func.count().label('count')
-                ).select_from(
-                    self.person_demographics
-                    .join(self.images, self.person_demographics.c.image_id == self.images.c.image_id)
-                    .join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
-                ).where(
-                    and_(
-                        self.images.c.marathon_id == marathon_id,
-                        self.person_demographics.c.race_label.is_not(None),
-                        self.shoe_detections.c.brand.is_not(None)
-                    )
-                ).group_by(self.person_demographics.c.race_label, self.shoe_detections.c.brand)
-                
-                race_results = conn.execute(race_stmt).fetchall()
-                
-                # Process race distribution
-                race_data = {}
-                for row in race_results:
-                    if row.brand not in race_data:
-                        race_data[row.brand] = {}
-                    race_data[row.brand][row.race_label] = row.count
-                
-                # 7. Get category distribution
-                category_stmt = select(
-                    self.images.c.category,
-                    self.shoe_detections.c.brand,
-                    func.count().label('count')
-                ).select_from(
-                    self.images.join(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
-                ).where(
-                    and_(
-                        self.images.c.marathon_id == marathon_id,
-                        self.images.c.category.is_not(None),
-                        self.shoe_detections.c.brand.is_not(None)
-                    )
-                ).group_by(self.images.c.category, self.shoe_detections.c.brand)
-
-                category_results = conn.execute(category_stmt).fetchall()
-                logger.info(f"Category query returned {len(category_results)} combinations")
-
-                # Process category distribution - CORRIGIDO
-                category_data = {}
-                for row in category_results:
-                    if row.brand not in category_data:
-                        category_data[row.brand] = {}
-                    category_data[row.brand][row.category] = row.count
-                
-                # Create top brands list
-                top_brands_list = []
-                for i, (brand, count) in enumerate(sorted(brand_counts_dict.items(), key=lambda x: x[1], reverse=True)[:10], 1):
-                    percentage = (count / total_shoes * 100) if total_shoes > 0 else 0.0
-                    top_brands_list.append({
-                        '#': i,
-                        'Marca': brand,
-                        'Count': count,
-                        'Participação (%)': round(percentage, 1)
-                    })
-                
-                logger.info(f"Calculated metrics: images={total_images}, shoes={total_shoes}, persons={total_persons}, brands={unique_brands}")
-                
-                # Store the metrics using SQLAlchemy
-                # First delete existing metrics
-                delete_stmt = delete(self.marathon_metrics).where(
-                    self.marathon_metrics.c.marathon_id == marathon_id
+                # Get runners data for these marathons
+                runners_query = select(self.marathon_runners).where(
+                    self.marathon_runners.c.marathon_id.in_(marathon_ids)
                 )
-                conn.execute(delete_stmt)
+                runners_df = pd.read_sql(runners_query, conn)
                 
-                # Then insert new metrics
-                insert_stmt = insert(self.marathon_metrics).values(
-                    marathon_id=marathon_id,
-                    total_images=total_images,
-                    total_shoes_detected=total_shoes,
-                    total_persons_with_demographics=total_persons,
-                    unique_brands_count=unique_brands,
-                    leader_brand_name=leader_name,
-                    leader_brand_count=leader_count,
-                    leader_brand_percentage=leader_percentage,
-                    brand_counts_json=json.dumps(brand_counts_dict),
-                    gender_distribution_json=json.dumps(gender_data),
-                    race_distribution_json=json.dumps(race_data),
-                    category_distribution_json=json.dumps(category_data),
-                    top_brands_json=json.dumps(top_brands_list),
-                    last_calculated=datetime.now()
-                )
-                
-                conn.execute(insert_stmt)
-                conn.commit()
-                
-                logger.info(f"Successfully stored metrics for marathon {marathon_id}")
-                
-                # Verify the stored data
-                verify_stmt = select(self.marathon_metrics).where(
-                    self.marathon_metrics.c.marathon_id == marathon_id
-                )
-                stored_metrics = conn.execute(verify_stmt).fetchone()
-                if stored_metrics:
-                    logger.info(f"Verified stored metrics: images={stored_metrics.total_images}, shoes={stored_metrics.total_shoes_detected}")
-                else:
-                    logger.error("Failed to verify stored metrics - no record found")
+                return marathons_df, runners_df
                 
         except Exception as e:
-            logger.error(f"Error calculating metrics for marathon {marathon_id}: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-
-    def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
-        """Retrieve pre-computed metrics for selected marathons."""
-        if not marathon_ids:
-            return {"total_images_selected": 0, "total_shoes_detected": 0}
-
-        try:
-            with self.get_connection() as conn:
-                # Use execute_query method for simpler parameter handling
-                placeholders = ','.join(['?'] * len(marathon_ids))
-                query = f"""
-                    SELECT m.name as marathon_name, met.*
-                    FROM marathon_metrics met
-                    JOIN marathons m ON met.marathon_id = m.marathon_id
-                    WHERE met.marathon_id IN ({placeholders})
-                """
-                # Convert to dict for named parameters
-                params = {f'param_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids)}
-                named_placeholders = ','.join([f':param_{i}' for i in range(len(marathon_ids))])
-                query = f"""
-                    SELECT m.name as marathon_name, met.*
-                    FROM marathon_metrics met
-                    JOIN marathons m ON met.marathon_id = m.marathon_id
-                    WHERE met.marathon_id IN ({named_placeholders})
-                """
-                result = conn.execute(text(query), params).fetchall()
-
-                # Aggregate metrics across marathons
-                total_images = sum(row.total_images for row in result)
-                total_shoes = sum(row.total_shoes_detected for row in result)
-                total_persons = sum(row.total_persons_with_demographics for row in result)
-
-                # Combine brand counts from all marathons
-                combined_brand_counts = pd.Series(dtype='int64')
-                combined_gender_dist = pd.DataFrame()
-                combined_race_dist = pd.DataFrame()
-                combined_category_dist = pd.DataFrame()
-                marathon_specific_data = {}
-
-                for row in result:
-                    marathon_name = row.marathon_name
-
-                    # Store individual marathon data for cards
-                    marathon_specific_data[marathon_name] = {
-                        "images_count": row.total_images,
-                        "shoes_count": row.total_shoes_detected,
-                        "persons_count": row.total_persons_with_demographics
-                    }
-
-                    # Combine brand counts
-                    if row.brand_counts_json and row.brand_counts_json != '{}':
-                        brand_counts_dict = json.loads(row.brand_counts_json)
-                        brand_counts = pd.Series(brand_counts_dict, dtype='int64')
-                        combined_brand_counts = combined_brand_counts.add(brand_counts, fill_value=0)
-
-                    # Combine gender distribution
-                    if row.gender_distribution_json and row.gender_distribution_json != '{}':
-                        gender_dist = pd.read_json(row.gender_distribution_json)
-                        if combined_gender_dist.empty:
-                            combined_gender_dist = gender_dist
-                        else:
-                            combined_gender_dist = combined_gender_dist.add(gender_dist, fill_value=0)
-
-                    # Combine race distribution
-                    if row.race_distribution_json and row.race_distribution_json != '{}':
-                        race_dist = pd.read_json(row.race_distribution_json)
-                        if combined_race_dist.empty:
-                            combined_race_dist = race_dist
-                        else:
-                            combined_race_dist = combined_race_dist.add(race_dist, fill_value=0)
-
-                    # Combine category distribution
-                    if row.category_distribution_json and row.category_distribution_json != '{}':
-                        category_dist = pd.read_json(row.category_distribution_json)
-                        if combined_category_dist.empty:
-                            combined_category_dist = category_dist
-                        else:
-                            combined_category_dist = combined_category_dist.add(category_dist, fill_value=0)
-
-                # Calculate leader brand from combined data
-                leader_name = "N/A"
-                leader_count = 0
-                leader_percentage = 0.0
-                unique_brands = len(combined_brand_counts)
-
-                if not combined_brand_counts.empty:
-                    leader_name = combined_brand_counts.idxmax()
-                    leader_count = int(combined_brand_counts.max())
-                    leader_percentage = (leader_count / total_shoes * 100) if total_shoes > 0 else 0.0
-
-                # Create top brands table
-                top_brands_df = pd.DataFrame()
-                if not combined_brand_counts.empty:
-                    top_n = 10
-                    top_brands_series = combined_brand_counts.head(top_n)
-                    top_brands_df = pd.DataFrame({
-                        'Marca': top_brands_series.index,
-                        'Count': top_brands_series.values.astype(int)
-                    })
-                    top_brands_df['#'] = range(1, len(top_brands_df) + 1)
-                    top_brands_df['Participação (%)'] = (top_brands_df['Count'] / total_shoes * 100).round(1) if total_shoes > 0 else 0.0
-                    max_count = top_brands_df['Count'].max()
-                    if pd.isna(max_count) or max_count == 0:
-                        max_count = 1
-                    top_brands_df['Gráfico'] = top_brands_df['Count'].apply(
-                        lambda x: "█" * int(round((x / max_count) * 10)) if max_count > 0 and pd.notna(x) else ""
-                    )
-                    top_brands_df = top_brands_df[['#', 'Marca', 'Count', 'Participação (%)', 'Gráfico']]
-
-                # Return combined metrics in the same format as process_queried_data_for_report
-                return {
-                    "total_images_selected": total_images,
-                    "total_shoes_detected": total_shoes,
-                    "unique_brands_count": unique_brands,
-                    "brand_counts_all_selected": combined_brand_counts,
-                    "top_brands_all_selected": top_brands_df,
-                    "persons_analyzed_count": total_persons,
-                    "leader_brand_info": {
-                        "name": leader_name,
-                        "count": leader_count,
-                        "percentage": leader_percentage
-                    },
-                    "gender_brand_distribution": combined_gender_dist,
-                    "race_brand_distribution": combined_race_dist,
-                    "brand_counts_by_marathon": pd.DataFrame(),  # Not pre-computed for now
-                    "brand_counts_by_category": combined_category_dist,
-                    "total_persons_by_marathon": pd.Series(dtype='int'),
-                    "marathon_specific_data_for_cards": marathon_specific_data,
-                }
-
-        except Exception as e:
-            logger.error(f"Failed to get precomputed marathon metrics: {e}")
-            # Fall back to real-time calculation
-            df_flat, df_raw = self.get_data_for_selected_marathons_db(marathon_ids)
-            from data_processing import process_queried_data_for_report
-            return process_queried_data_for_report(df_flat, df_raw)
-
-    def get_individual_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Dict[str, Any]]:
-        """Retrieve pre-computed metrics for individual marathons efficiently."""
-        if not marathon_ids:
-            return {}
-
-        try:
-            with self.get_connection() as conn:
-                # Use execute_query method for simpler parameter handling
-                params = {f'param_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids)}
-                named_placeholders = ','.join([f':param_{i}' for i in range(len(marathon_ids))])
-                query = f"""
-                    SELECT m.name as marathon_name, met.*
-                    FROM marathon_metrics met
-                    JOIN marathons m ON met.marathon_id = m.marathon_id
-                    WHERE met.marathon_id IN ({named_placeholders})
-                """
-                result = conn.execute(text(query), params).fetchall()
-
-                if not result:
-                    # No pre-computed metrics found, fall back to real-time calculation
-                    logger.warning("No pre-computed metrics found, falling back to real-time calculation")
-                    individual_results = {}
-                    for marathon_id in marathon_ids:
-                        df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
-                        from data_processing import process_queried_data_for_report
-                        marathon_list = self.get_marathon_list_from_db()
-                        marathon_name = next((m['name'] for m in marathon_list if m['id'] == marathon_id), f"Marathon_{marathon_id}")
-                        individual_results[marathon_name] = process_queried_data_for_report(df_flat, df_raw)
-                    return individual_results
-
-                # Process each marathon individually
-                individual_results = {}
-
-                for row in result:
-                    marathon_name = row.marathon_name
-
-                    # Parse individual marathon data
-                    brand_counts = pd.Series(dtype='int64')
-                    if row.brand_counts_json and row.brand_counts_json != '{}':
-                        brand_counts_dict = json.loads(row.brand_counts_json)
-                        brand_counts = pd.Series(brand_counts_dict, dtype='int64')
-
-                    gender_dist = pd.DataFrame()
-                    if row.gender_distribution_json and row.gender_distribution_json != '{}':
-                        gender_dist = pd.read_json(row.gender_distribution_json)
-
-                    race_dist = pd.DataFrame()
-                    if row.race_distribution_json and row.race_distribution_json != '{}':
-                        race_dist = pd.read_json(row.race_distribution_json)
-
-                    category_dist = pd.DataFrame()
-                    if row.category_distribution_json and row.category_distribution_json != '{}':
-                        category_dist = pd.read_json(row.category_distribution_json)
-
-                    # Create top brands table for this marathon
-                    top_brands_df = pd.DataFrame()
-                    if not brand_counts.empty:
-                        top_n = 10
-                        top_brands_series = brand_counts.head(top_n)
-                        top_brands_df = pd.DataFrame({
-                            'Marca': top_brands_series.index,
-                            'Count': top_brands_series.values.astype(int)
-                        })
-                        top_brands_df['#'] = range(1, len(top_brands_df) + 1)
-                        total_shoes = row.total_shoes_detected
-                        top_brands_df['Participação (%)'] = (top_brands_df['Count'] / total_shoes * 100).round(1) if total_shoes > 0 else 0.0
-                        max_count = top_brands_df['Count'].max()
-                        if pd.isna(max_count) or max_count == 0:
-                            max_count = 1
-                        top_brands_df['Gráfico'] = top_brands_df['Count'].apply(
-                            lambda x: "█" * int(round((x / max_count) * 10)) if max_count > 0 and pd.notna(x) else ""
-                        )
-                        top_brands_df = top_brands_df[['#', 'Marca', 'Count', 'Participação (%)', 'Gráfico']]
-
-                    # Store individual marathon data
-                    individual_results[marathon_name] = {
-                        "total_images_selected": row.total_images,
-                        "total_shoes_detected": row.total_shoes_detected,
-                        "unique_brands_count": row.unique_brands_count,
-                        "brand_counts_all_selected": brand_counts,
-                        "top_brands_all_selected": top_brands_df,
-                        "persons_analyzed_count": row.total_persons_with_demographics,
-                        "leader_brand_info": {
-                            "name": row.leader_brand_name or "N/A",
-                            "count": row.leader_brand_count or 0,
-                            "percentage": row.leader_brand_percentage or 0.0
-                        },
-                        "gender_brand_distribution": gender_dist,
-                        "race_brand_distribution": race_dist,
-                        "brand_counts_by_category": category_dist,
-                        "brand_counts_by_marathon": pd.DataFrame(),  # Not needed for individual
-                        "total_persons_by_marathon": pd.Series(dtype='int'),
-                        "marathon_specific_data_for_cards": {
-                            marathon_name: {
-                                "images_count": row.total_images,
-                                "shoes_count": row.total_shoes_detected,
-                                "persons_count": row.total_persons_with_demographics
-                            }
-                        },
-                    }
-
-                return individual_results
-
-        except Exception as e:
-            logger.error(f"Failed to get individual marathon metrics: {e}")
-            # Fall back to real-time calculation
-            individual_results = {}
-            for marathon_id in marathon_ids:
-                df_flat, df_raw = self.get_data_for_selected_marathons_db([marathon_id])
-                from data_processing import process_queried_data_for_report
-                marathon_list = self.get_marathon_list_from_db()
-                marathon_name = next((m['name'] for m in marathon_list if m['id'] == marathon_id), f"Marathon_{marathon_id}")
-                individual_results[marathon_name] = process_queried_data_for_report(df_flat, df_raw)
-            return individual_results
+            logger.error(f"Failed to get data for marathons {marathon_ids}: {e}")
+            try:
+                import pandas as pd
+                return pd.DataFrame(), pd.DataFrame()
+            except ImportError:
+                return [], []
 
     def get_marathon_list_from_db(self) -> List[Dict]:
-        """Get list of all marathons from the database."""
+        """Get list of all marathons with basic info."""
         try:
             with self.get_connection() as conn:
                 stmt = select(
-                    self.marathons.c.marathon_id,
+                    self.marathons.c.marathon_id.label('id'),
                     self.marathons.c.name,
                     self.marathons.c.event_date,
                     self.marathons.c.location,
                     self.marathons.c.distance_km,
-                    self.marathons.c.description
-                ).order_by(self.marathons.c.event_date.desc(), self.marathons.c.name.asc())
-                result = conn.execute(stmt).fetchall()
+                    self.marathons.c.upload_timestamp
+                ).order_by(self.marathons.c.upload_timestamp.desc())
                 
+                result = conn.execute(stmt).fetchall()
                 return [
                     {
-                        "id": row.marathon_id,
+                        "id": row.id,
                         "name": row.name,
                         "event_date": row.event_date,
                         "location": row.location,
                         "distance_km": row.distance_km,
-                        "description": row.description
+                        "upload_timestamp": row.upload_timestamp
                     }
                     for row in result
                 ]
         except Exception as e:
             logger.error(f"Failed to get marathon list: {e}")
             return []
-
-    def get_data_for_selected_marathons_db(self, marathon_ids_list: List[int]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Get data for selected marathons from the database."""
-        if not marathon_ids_list:
-            return pd.DataFrame(), pd.DataFrame()
-
+    
+    def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
+        """
+        Get precomputed metrics from marathon descriptions.
+        This is a simplified version that extracts basic metrics.
+        """
         try:
-            with self.get_connection() as conn:
-                # Use SQLAlchemy's text() with named parameters for PostgreSQL compatibility
-                from sqlalchemy import text
-                
-                # Create named parameters for the IN clause
-                params = {f'marathon_id_{i}': marathon_id for i, marathon_id in enumerate(marathon_ids_list)}
-                named_placeholders = ','.join([f':marathon_id_{i}' for i in range(len(marathon_ids_list))])
-
-                # Query for flattened data (shoe & demographic per image)
-                query_flat = f"""
-                    SELECT
-                        m.marathon_id,
-                        m.name as marathon_name,
-                        i.image_id,
-                        i.filename,
-                        i.category,
-                        s.brand as shoe_brand,
-                        s.probability as shoe_prob,
-                        s.confidence as shoe_confidence,
-                        p.gender_label as person_gender,
-                        p.age_label as person_age,
-                        p.race_label as person_race
-                    FROM marathons m
-                    JOIN images i ON m.marathon_id = i.marathon_id
-                    LEFT JOIN shoe_detections s ON i.image_id = s.image_id
-                    LEFT JOIN person_demographics p ON i.image_id = p.image_id
-                    WHERE m.marathon_id IN ({named_placeholders})
-                """
-                logger.info(f"Executing query for flattened data: {query_flat} with params {params}")
-                # Execute with named parameters
-                result_flat = conn.execute(text(query_flat), params)
-                df_flat_selected = pd.DataFrame(result_flat.fetchall(), columns=result_flat.keys())
-                logger.info(f"Retrieved {len(df_flat_selected)} rows of flattened data")
-                # Query for raw-like structure for counts
-                query_raw_reconstructed = f"""
-                    SELECT 
-                        m.marathon_id,
-                        m.name as marathon_name,
-                        i.filename,
-                        i.category,
-                        i.original_width,
-                        i.original_height,
-                        (SELECT COUNT(*) FROM person_demographics pd WHERE pd.image_id = i.image_id) > 0 as has_demographics
-                    FROM marathons m
-                    JOIN images i ON m.marathon_id = i.marathon_id
-                    WHERE m.marathon_id IN ({named_placeholders})
-                """
-                
-                result_raw = conn.execute(text(query_raw_reconstructed), params)
-                df_raw_reconstructed_for_counts = pd.DataFrame(result_raw.fetchall(), columns=result_raw.keys())
-
-                return df_flat_selected, df_raw_reconstructed_for_counts
-        except Exception as e:
-            logger.error(f"Failed to get data for selected marathons: {e}")
-            return pd.DataFrame(), pd.DataFrame()
-
-    def get_images_paginated(self, marathon_id: int, offset: int = 0, limit: int = 20) -> Dict[str, Any]:
-        """Retrieve images and detection data for a marathon with pagination."""
-        try:
-            with self.get_connection() as conn:
-                total_stmt = select(func.count()).select_from(self.images).where(self.images.c.marathon_id == marathon_id)
-                total_images = conn.execute(total_stmt).scalar() or 0
-
-                stmt = (
-                    select(
-                        self.images.c.image_id,
-                        self.images.c.filename,
-                        self.images.c.category,
-                        self.images.c.original_width,
-                        self.images.c.original_height,
-                        self.images.c.bbox,
-                        self.shoe_detections.c.brand,
-                        self.shoe_detections.c.probability,
-                        self.shoe_detections.c.confidence,
-                        self.shoe_detections.c.bbox_x1,
-                        self.shoe_detections.c.bbox_y1,
-                        self.shoe_detections.c.bbox_x2,
-                        self.shoe_detections.c.bbox_y2,
-                        self.person_demographics.c.gender_label,
-                        self.person_demographics.c.gender_prob,
-                        self.person_demographics.c.age_label,
-                        self.person_demographics.c.age_prob,
-                        self.person_demographics.c.race_label,
-                        self.person_demographics.c.race_prob,
-                        self.person_demographics.c.person_bbox_x1,
-                        self.person_demographics.c.person_bbox_y1,
-                        self.person_demographics.c.person_bbox_x2,
-                        self.person_demographics.c.person_bbox_y2,
-                    )
-                    .select_from(
-                        self.images
-                        .outerjoin(self.shoe_detections, self.images.c.image_id == self.shoe_detections.c.image_id)
-                        .outerjoin(self.person_demographics, self.images.c.image_id == self.person_demographics.c.image_id)
-                    )
-                    .where(self.images.c.marathon_id == marathon_id)
-                    .order_by(self.images.c.image_id)
-                    .offset(offset)
-                    .limit(limit)
-                )
-
-                rows = conn.execute(stmt).fetchall()
-            #print row headers for debugging
-            images: Dict[int, Dict[str, Any]] = {}
-            for row in rows:
-                bbox = [int(coord) for coord in json.loads(row.bbox)] if row.bbox else None
-                img_id = row.image_id
-                if img_id not in images:
-                    images[img_id] = {
-                        "image_id": img_id,
-                        "filename": row.filename,
-                        "category": row.category,
-                        "original_width": row.original_width,
-                        "original_height": row.original_height,
-                        "person_bbox": bbox,
-                        "shoes": [],
-                        "demographic": None,
-                    }
-
-                if row.brand:
-                    # person_bbox is a bbox inside the original image, the shoe bbox is relative to the person create a function that converts the shoe bbox to the original image coordinates
+            if not marathon_ids:
+                return {}
             
-                    shoe_bbox = [
-                        bbox[0] + row.bbox_x1,
-                        bbox[1] + row.bbox_y1,
-                        bbox[0] + row.bbox_x2,
-                        bbox[1] + row.bbox_y2,
-                    ]
-                                  
-                    images[img_id]["shoes"].append({
-                        "brand": row.brand,
-                        "probability": row.probability,
-                        "confidence": row.confidence,
-                        "bbox": shoe_bbox,
-                    })
-                    
-
-                if images[img_id]["demographic"] is None and any([row.gender_label, row.age_label, row.race_label]):
-
-                    #fix later
-                    person_bbox = [
-                        bbox[0] + row.person_bbox_x1,
-                        bbox[1] + row.person_bbox_y1,
-                        bbox[0] + row.person_bbox_x2,
-                        bbox[1] + row.person_bbox_y2,
-                    ]
-                    images[img_id]["demographic"] = {
-                        "gender": {"label": row.gender_label, "prob": row.gender_prob},
-                        "age": {"label": row.age_label, "prob": row.age_prob},
-                        "race": {"label": row.race_label, "prob": row.race_prob},
-                        "bbox": person_bbox,
-                    }
-
-            return {"total": total_images, "images": list(images.values())}
+            with self.get_connection() as conn:
+                # Get total runners across all specified marathons
+                stmt = select(func.count(self.marathon_runners.c.id)).where(
+                    self.marathon_runners.c.marathon_id.in_(marathon_ids)
+                )
+                total_shoes = conn.execute(stmt).scalar() or 0
+                
+                # Get unique brands count
+                stmt = select(func.count(func.distinct(self.marathon_runners.c.shoe_brand))).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
+                        self.marathon_runners.c.shoe_brand.isnot(None)
+                    )
+                )
+                unique_brands = conn.execute(stmt).scalar() or 0
+                
+                # Get leader brand
+                stmt = select(
+                    self.marathon_runners.c.shoe_brand,
+                    func.count(self.marathon_runners.c.shoe_brand).label('count')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
+                        self.marathon_runners.c.shoe_brand.isnot(None)
+                    )
+                ).group_by(self.marathon_runners.c.shoe_brand).order_by(
+                    func.count(self.marathon_runners.c.shoe_brand).desc()
+                ).limit(1)
+                
+                leader_result = conn.execute(stmt).fetchone()
+                leader_brand = leader_result.shoe_brand if leader_result else "N/A"
+                
+                return {
+                    'total_shoes_detected': total_shoes,
+                    'unique_brands_count': unique_brands,
+                    'leader_brand_name': leader_brand
+                }
         except Exception as e:
-            logger.error(f"Failed to get paginated images: {e}")
-            return {"total": 0, "images": []}
+            logger.error(f"Failed to get precomputed marathon metrics: {e}")
+            return {}
+    
+    def get_individual_marathon_metrics(self, marathon_id: int) -> Dict[str, Any]:
+        """
+        Get detailed metrics for a single marathon.
+        
+        Args:
+            marathon_id: ID of the marathon to get metrics for
+            
+        Returns:
+            Dictionary containing detailed marathon metrics
+        """
+        try:
+            with self.get_connection() as conn:
+                # Get marathon basic info
+                marathon_stmt = select(self.marathons).where(
+                    self.marathons.c.marathon_id == marathon_id
+                )
+                marathon_result = conn.execute(marathon_stmt).fetchone()
+                
+                if not marathon_result:
+                    return {}
+                
+                # Get total participants
+                total_stmt = select(func.count(self.marathon_runners.c.id)).where(
+                    self.marathon_runners.c.marathon_id == marathon_id
+                )
+                total_participants = conn.execute(total_stmt).scalar() or 0
+                
+                # Get brand distribution
+                brand_stmt = select(
+                    self.marathon_runners.c.shoe_brand,
+                    func.count(self.marathon_runners.c.shoe_brand).label('count')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id == marathon_id,
+                        self.marathon_runners.c.shoe_brand.isnot(None)
+                    )
+                ).group_by(self.marathon_runners.c.shoe_brand).order_by(
+                    func.count(self.marathon_runners.c.shoe_brand).desc()
+                )
+                brand_results = conn.execute(brand_stmt).fetchall()
+                
+                # Build brand distribution
+                brand_distribution = {}
+                for row in brand_results:
+                    brand_distribution[row.shoe_brand] = row.count
+                
+                # Get gender distribution
+                gender_stmt = select(
+                    self.marathon_runners.c.gender,
+                    func.count(self.marathon_runners.c.gender).label('count')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id == marathon_id,
+                        self.marathon_runners.c.gender.isnot(None)
+                    )
+                ).group_by(self.marathon_runners.c.gender)
+                gender_results = conn.execute(gender_stmt).fetchall()
+                
+                gender_distribution = {}
+                for row in gender_results:
+                    gender_distribution[row.gender] = row.count
+                
+                # Get category distribution
+                category_stmt = select(
+                    self.marathon_runners.c.run_category,
+                    func.count(self.marathon_runners.c.run_category).label('count')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id == marathon_id,
+                        self.marathon_runners.c.run_category.isnot(None)
+                    )
+                ).group_by(self.marathon_runners.c.run_category)
+                category_results = conn.execute(category_stmt).fetchall()
+                
+                category_distribution = {}
+                for row in category_results:
+                    category_distribution[row.run_category] = row.count
+                
+                # Get confidence statistics
+                confidence_stmt = select(
+                    func.avg(self.marathon_runners.c.confidence).label('avg'),
+                    func.min(self.marathon_runners.c.confidence).label('min'),
+                    func.max(self.marathon_runners.c.confidence).label('max')
+                ).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id == marathon_id,
+                        self.marathon_runners.c.confidence.isnot(None)
+                    )
+                )
+                confidence_result = conn.execute(confidence_stmt).fetchone()
+                
+                # Get positioned vs unpositioned counts
+                positioned_stmt = select(func.count(self.marathon_runners.c.id)).where(
+                    and_(
+                        self.marathon_runners.c.marathon_id == marathon_id,
+                        self.marathon_runners.c.position.isnot(None)
+                    )
+                )
+                positioned_count = conn.execute(positioned_stmt).scalar() or 0
+                unpositioned_count = total_participants - positioned_count
+                
+                # Calculate leader brand info
+                leader_brand = None
+                leader_count = 0
+                leader_percentage = 0
+                
+                if brand_distribution:
+                    leader_brand = list(brand_distribution.keys())[0]
+                    leader_count = brand_distribution[leader_brand]
+                    leader_percentage = round((leader_count / total_participants) * 100, 2) if total_participants > 0 else 0
+                
+                # Build comprehensive metrics
+                metrics = {
+                    'marathon_id': marathon_id,
+                    'marathon_name': marathon_result.name,
+                    'event_date': marathon_result.event_date,
+                    'location': marathon_result.location,
+                    'distance_km': marathon_result.distance_km,
+                    'upload_timestamp': marathon_result.upload_timestamp,
+                    
+                    # Participation metrics
+                    'total_participants': total_participants,
+                    'positioned_participants': positioned_count,
+                    'unpositioned_participants': unpositioned_count,
+                    'positioning_rate': round((positioned_count / total_participants) * 100, 2) if total_participants > 0 else 0,
+                    
+                    # Brand metrics
+                    'total_brands': len(brand_distribution),
+                    'brand_distribution': brand_distribution,
+                    'leader_brand': {
+                        'name': leader_brand or 'N/A',
+                        'count': leader_count,
+                        'percentage': leader_percentage
+                    },
+                    
+                    # Demographic metrics
+                    'gender_distribution': gender_distribution,
+                    'category_distribution': category_distribution,
+                    
+                    # Confidence metrics
+                    'confidence_stats': {
+                        'avg': round(float(confidence_result.avg), 2) if confidence_result and confidence_result.avg else 0,
+                        'min': round(float(confidence_result.min), 2) if confidence_result and confidence_result.min else 0,
+                        'max': round(float(confidence_result.max), 2) if confidence_result and confidence_result.max else 0
+                    }
+                }
+                
+                return metrics
+                
+        except Exception as e:
+            logger.error(f"Failed to get individual marathon metrics for {marathon_id}: {e}")
+            return {}
+
+
 # Global database manager instance
 try:
     db = DatabaseManager()
 except Exception as e:
     logger.error(f"Failed to initialize database manager: {e}")
     db = None
-
-
-# Convenience functions for backward compatibility
-def get_marathon_list_from_db():
-    """Backward compatibility function."""
-    if db is None:
-        return []
-    return db.get_marathon_list_from_db()
-
-
-def get_data_for_selected_marathons_db(marathon_ids_list):
-    """Backward compatibility function."""
-    if db is None:
-        return pd.DataFrame(), pd.DataFrame()
-    return db.get_data_for_selected_marathons_db(marathon_ids_list)
-
-
-def get_precomputed_marathon_metrics(marathon_ids):
-    """Backward compatibility function."""
-    if db is None:
-        return {"total_images_selected": 0, "total_shoes_detected": 0}
-    return db.get_precomputed_marathon_metrics(marathon_ids)
-
-
-def get_individual_marathon_metrics(marathon_ids):
-    """Backward compatibility function."""
-    if db is None:
-        return {}
-    return db.get_individual_marathon_metrics(marathon_ids)
-
-
-def get_images_paginated(marathon_id, offset=0, limit=20):
-    """Backward compatibility function for paginated image retrieval."""
-    if db is None:
-        return {"total": 0, "images": []}
-    return db.get_images_paginated(marathon_id, offset, limit)
-
-
-def add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id):
-    """Backward compatibility function."""
-    if db is None:
-        return None
-    return db.add_marathon_metadata(name, event_date, location, distance_km, description, original_json_filename, user_id)
-
-
-def insert_parsed_json_data(marathon_id, parsed_json_data_list):
-    """Backward compatibility function."""
-    if db is None:
-        return False
-    return db.insert_parsed_json_data(marathon_id, parsed_json_data_list)
-
-
-def delete_marathon_by_id(marathon_id):
-    """Backward compatibility function."""
-    if db is None:
-        return False
-    return db.delete_marathon_by_id(marathon_id)
