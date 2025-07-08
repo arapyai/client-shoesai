@@ -3,8 +3,9 @@ import pandas as pd
 from ui_components import (
     page_header_with_logout,
     render_brand_distribution_chart,
-    render_demographic_analysis,
     render_marathon_info_cards,
+    render_demographic_analysis,
+    render_category_distribution_analysis,
     check_auth
 )
 from database_abstraction import db
@@ -23,14 +24,12 @@ def fetch_marathon_options_from_db_cached():
 marathon_options = fetch_marathon_options_from_db_cached()
 MARATHON_NAMES_LIST = [m['name'] for m in marathon_options]
 MARATHON_ID_MAP = {m['name']: m['id'] for m in marathon_options}
+HIGHLIGHT_BRANDS = ["Olympikus", "Mizuno"]
 
 # --- Page Header and Marathon Selection ---
-page_header_with_logout("📊 Relatórios de Análise", 
-                        "Visualize e analise os dados das provas importadas.", 
+page_header_with_logout("📊 Análise de Provas", 
+                        "Selecione as provas que gostaria de analisar. Os relatórios são gerados automaticamente.", 
                         key_suffix="reports")
-
-# Marathon selection
-st.subheader("🏃‍♂️ Seleção de Provas")
 
 if not MARATHON_NAMES_LIST:
     st.warning("⚠️ Nenhuma prova encontrada no sistema. Importe dados na página de Importação primeiro.")
@@ -39,28 +38,42 @@ if not MARATHON_NAMES_LIST:
     st.stop()
 
 # Simple marathon selector
-selected_marathon = st.selectbox(
+selected_marathon = st.multiselect(
     "Escolha uma prova para análise:",
     options=MARATHON_NAMES_LIST,
     key="selected_marathon_simple"
 )
 
-if selected_marathon and selected_marathon in MARATHON_ID_MAP:
-    marathon_id = MARATHON_ID_MAP[selected_marathon]
+if selected_marathon:
+    selected_ids = [MARATHON_ID_MAP[name] for name in selected_marathon]
+    marathon_id = selected_ids[0]  # Use the first selected marathon ID
     
     # Get marathon data
     with st.spinner("🔄 Carregando dados da prova..."):
         marathon_data = db.get_individual_marathon_metrics(marathon_id)
     
     if marathon_data:
+        st.markdown("---")
+
         # Marathon info card
-        render_marathon_info_cards(marathon_data)
+        st.subheader(f"📊 {marathon_data.get('marathon_name')}")
+
+
+        with st.container(border=True):
+            render_marathon_info_cards(marathon_data)
         
         # Brand distribution chart
-        render_brand_distribution_chart(marathon_data)
+        with st.expander("Distribuição de Marcas", expanded=True):
+            render_brand_distribution_chart(marathon_data, highlight=HIGHLIGHT_BRANDS)
 
         # Demographic analysis
-        render_demographic_analysis(marathon_data)    
+        with st.expander("Presença de marcas por gênero", expanded=True):
+            gender_data = db.get_gender_brand_distribution(marathon_id)
+            render_demographic_analysis(gender_data, highlight=HIGHLIGHT_BRANDS)
+        
+        with st.expander("Presença de marcas por distância.", expanded=True):
+            category_data = db.get_category_brand_distribution(marathon_id)
+            render_category_distribution_analysis(category_data, highlight=HIGHLIGHT_BRANDS)
 
         # Export options
         st.markdown("---")

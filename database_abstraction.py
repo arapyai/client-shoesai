@@ -591,109 +591,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get marathon list: {e}")
             return []
-    
-    def get_precomputed_marathon_metrics(self, marathon_ids: List[int]) -> Dict[str, Any]:
-        """
-        Get precomputed metrics from marathon descriptions or calculate from runner data.
-        First tries to read stored statistics, then falls back to calculation.
-        """
-        try:
-            if not marathon_ids:
-                return {}
-            
-            with self.get_connection() as conn:
-                # First try to get stored statistics from descriptions
-                stmt = select(self.marathons.c.description).where(
-                    self.marathons.c.marathon_id.in_(marathon_ids)
-                )
-                descriptions = conn.execute(stmt).fetchall()
-                
-                # Try to extract statistics from descriptions
-                stored_stats = None
-                for desc_row in descriptions:
-                    if desc_row.description and "--- ESTATÍSTICAS AUTOMÁTICAS ---" in desc_row.description:
-                        try:
-                            # Extract JSON from description
-                            stats_start = desc_row.description.find("--- ESTATÍSTICAS AUTOMÁTICAS ---")
-                            stats_json = desc_row.description[stats_start + len("--- ESTATÍSTICAS AUTOMÁTICAS ---"):].strip()
-                            stored_stats = json.loads(stats_json)
-                            
-                            # Convert stored stats to expected format
-                            if stored_stats:
-                                return {
-                                    'total_shoes_detected': stored_stats.get('total_participants', 0),
-                                    'unique_brands_count': stored_stats.get('total_brands', 0),
-                                    'leader_brand_name': stored_stats.get('leader_brand', {}).get('name', 'N/A'),
-                                    'total_images_selected': stored_stats.get('total_participants', 0),
-                                    'stored_statistics': stored_stats  # Include full stats for reports
-                                }
-                        except (json.JSONDecodeError, KeyError, AttributeError) as e:
-                            logger.warning(f"Failed to parse stored statistics: {e}")
-                            continue
-                
-                # Fallback: Calculate from runner data if no stored stats found
-                logger.info(f"No stored statistics found for marathons {marathon_ids}, calculating from runner data...")
-                
-                # Get total runners across all specified marathons
-                stmt = select(func.count(self.marathon_runners.c.id)).where(
-                    self.marathon_runners.c.marathon_id.in_(marathon_ids)
-                )
-                total_shoes = conn.execute(stmt).scalar() or 0
-                
-                # Get unique brands count
-                stmt = select(func.count(func.distinct(self.marathon_runners.c.shoe_brand))).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
-                        self.marathon_runners.c.shoe_brand.isnot(None)
-                    )
-                )
-                unique_brands = conn.execute(stmt).scalar() or 0
-                
-                # Get leader brand
-                stmt = select(
-                    self.marathon_runners.c.shoe_brand,
-                    func.count(self.marathon_runners.c.shoe_brand).label('count')
-                ).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
-                        self.marathon_runners.c.shoe_brand.isnot(None)
-                    )
-                ).group_by(self.marathon_runners.c.shoe_brand).order_by(
-                    func.count(self.marathon_runners.c.shoe_brand).desc()
-                ).limit(1)
-                
-                leader_result = conn.execute(stmt).fetchone()
-                leader_brand = leader_result.shoe_brand if leader_result else "N/A"
-                
-                # Get brand distribution for more complete stats
-                brand_stmt = select(
-                    self.marathon_runners.c.shoe_brand,
-                    func.count(self.marathon_runners.c.shoe_brand).label('count')
-                ).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id.in_(marathon_ids),
-                        self.marathon_runners.c.shoe_brand.isnot(None)
-                    )
-                ).group_by(self.marathon_runners.c.shoe_brand).order_by(
-                    func.count(self.marathon_runners.c.shoe_brand).desc()
-                )
-                brand_results = conn.execute(brand_stmt).fetchall()
-                
-                brand_distribution = {}
-                for row in brand_results:
-                    brand_distribution[row.shoe_brand] = row.count
-                
-                return {
-                    'total_shoes_detected': total_shoes,
-                    'unique_brands_count': unique_brands,
-                    'leader_brand_name': leader_brand,
-                    'total_images_selected': total_shoes,
-                    'brand_distribution': brand_distribution
-                }
-                
-        except Exception as e:
-            logger.error(f"Failed to get precomputed marathon metrics: {e}")
-            return {}
+  
     
     def get_individual_marathon_metrics(self, marathon_id: int) -> Dict[str, Any]:
         """
@@ -740,62 +638,7 @@ class DatabaseManager:
                 brand_distribution = {}
                 for row in brand_results:
                     brand_distribution[row.shoe_brand] = row.count
-                
-                # Get gender distribution
-                gender_stmt = select(
-                    self.marathon_runners.c.gender,
-                    func.count(self.marathon_runners.c.gender).label('count')
-                ).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id == marathon_id,
-                        self.marathon_runners.c.gender.isnot(None)
-                    )
-                ).group_by(self.marathon_runners.c.gender)
-                gender_results = conn.execute(gender_stmt).fetchall()
-                
-                gender_distribution = {}
-                for row in gender_results:
-                    gender_distribution[row.gender] = row.count
-                
-                # Get category distribution
-                category_stmt = select(
-                    self.marathon_runners.c.run_category,
-                    func.count(self.marathon_runners.c.run_category).label('count')
-                ).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id == marathon_id,
-                        self.marathon_runners.c.run_category.isnot(None)
-                    )
-                ).group_by(self.marathon_runners.c.run_category)
-                category_results = conn.execute(category_stmt).fetchall()
-                
-                category_distribution = {}
-                for row in category_results:
-                    category_distribution[row.run_category] = row.count
-                
-                # Get confidence statistics
-                confidence_stmt = select(
-                    func.avg(self.marathon_runners.c.confidence).label('avg'),
-                    func.min(self.marathon_runners.c.confidence).label('min'),
-                    func.max(self.marathon_runners.c.confidence).label('max')
-                ).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id == marathon_id,
-                        self.marathon_runners.c.confidence.isnot(None)
-                    )
-                )
-                confidence_result = conn.execute(confidence_stmt).fetchone()
-                
-                # Get positioned vs unpositioned counts
-                positioned_stmt = select(func.count(self.marathon_runners.c.id)).where(
-                    and_(
-                        self.marathon_runners.c.marathon_id == marathon_id,
-                        self.marathon_runners.c.position.isnot(None)
-                    )
-                )
-                positioned_count = conn.execute(positioned_stmt).scalar() or 0
-                unpositioned_count = total_participants - positioned_count
-                
+                                
                 # Calculate leader brand info
                 leader_brand = None
                 leader_count = 0
@@ -816,11 +659,7 @@ class DatabaseManager:
                     'upload_timestamp': marathon_result.upload_timestamp,
                     
                     # Participation metrics
-                    'total_participants': total_participants,
-                    'positioned_participants': positioned_count,
-                    'unpositioned_participants': unpositioned_count,
-                    'positioning_rate': round((positioned_count / total_participants) * 100, 2) if total_participants > 0 else 0,
-                    
+                    'total_participants': total_participants,  
                     # Brand metrics
                     'total_brands': len(brand_distribution),
                     'brand_distribution': brand_distribution,
@@ -829,22 +668,6 @@ class DatabaseManager:
                         'count': leader_count,
                         'percentage': leader_percentage
                     },
-                    
-                    # Demographic metrics
-                    'gender_distribution': gender_distribution,
-                    'category_distribution': category_distribution,
-                    
-                    # Confidence metrics
-                    'confidence_stats': {
-                        'avg': round(float(confidence_result.avg), 2) if confidence_result and confidence_result.avg else 0,
-                        'min': round(float(confidence_result.min), 2) if confidence_result and confidence_result.min else 0,
-                        'max': round(float(confidence_result.max), 2) if confidence_result and confidence_result.max else 0
-                    },
-                    # Compatibility fields for reports
-                'total_shoes_detected': total_participants,
-                'unique_brands_count': len(brand_distribution),
-                'leader_brand_name': leader_brand or 'N/A',
-                'total_images_selected': total_participants
             }
             
             return metrics
@@ -853,6 +676,76 @@ class DatabaseManager:
             logger.error(f"Failed to get individual marathon metrics for {marathon_id}: {e}")
             return {}
     
+    def get_gender_brand_distribution(self, marathon_id: int):
+        """
+        Get gender distribution faceted by brand for a specific marathon.
+
+        Args:
+            marathon_id: ID of the marathon
+            
+        Returns:
+            Dictionary containing gender-brand cross-tabulation data
+        """
+        with self.get_connection() as conn:
+            # Get gender-brand cross-tabulation
+            stmt = select(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.gender,
+                func.count(self.marathon_runners.c.id).label('count')
+            ).where(
+                and_(
+                    self.marathon_runners.c.marathon_id == marathon_id,
+                    self.marathon_runners.c.shoe_brand.isnot(None),
+                    self.marathon_runners.c.gender.isnot(None)
+                )
+            ).group_by(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.gender
+            ).order_by(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.gender
+            )
+            
+            results = conn.execute(stmt).fetchall()
+
+            results_df = pd.DataFrame(results)
+            return(results_df)    
+    
+    def get_category_brand_distribution(self, marathon_id: int):
+        """
+        Get run category distribution faceted by brand for a specific marathon.
+
+        Args:
+            marathon_id: ID of the marathon
+            
+        Returns:
+            Dictionary containing category-brand cross-tabulation data
+        """
+        with self.get_connection() as conn:
+            # Get category-brand cross-tabulation
+            stmt = select(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.run_category,
+                func.count(self.marathon_runners.c.id).label('count')
+            ).where(
+                and_(
+                    self.marathon_runners.c.marathon_id == marathon_id,
+                    self.marathon_runners.c.shoe_brand.isnot(None),
+                    self.marathon_runners.c.run_category.isnot(None)
+                )
+            ).group_by(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.run_category
+            ).order_by(
+                self.marathon_runners.c.shoe_brand,
+                self.marathon_runners.c.run_category
+            )
+            
+            results = conn.execute(stmt).fetchall()
+
+            results_df = pd.DataFrame(results)
+            return(results_df)
+
     def delete_marathon_by_id(self, marathon_id: int) -> bool:
         """
         Delete a marathon and all associated data by marathon ID.
@@ -895,6 +788,8 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to delete marathon {marathon_id}: {e}")
             return False
+
+
 
 
 # Global database manager instance
