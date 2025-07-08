@@ -69,7 +69,7 @@ if selected_marathon:
         # Demographic analysis
         with st.expander("Presença de marcas por gênero", expanded=True):
             gender_data = db.get_gender_brand_distribution(marathon_id)
-            render_demographic_analysis(gender_data, highlight=HIGHLIGHT_BRANDS)
+            render_demographic_analysis(gender_data)
         
         with st.expander("Presença de marcas por distância.", expanded=True):
             category_data = db.get_category_brand_distribution(marathon_id)

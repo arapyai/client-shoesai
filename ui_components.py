@@ -280,7 +280,7 @@ def render_brand_distribution_chart(marathon_data: Dict[str, Any], highlight=Non
     
     st.altair_chart(chart, use_container_width=True)
     
-def render_demographic_analysis(gender_data, highlight=None):
+def render_demographic_analysis(gender_data):
     """
     Renders demographic analysis charts optimized for database data.
     
@@ -298,7 +298,30 @@ def render_demographic_analysis(gender_data, highlight=None):
     #create a percentage column that show the percentage of gender by brand
     chart_data['percentage'] = chart_data['count'] / chart_data.groupby('shoe_brand')['count'].transform('sum')
 
-
+    # Calculate total count for each brand to determine which ones to group as "Outros"
+    brand_totals = chart_data.groupby('shoe_brand')['count'].sum()
+    total_participants = chart_data['count'].sum()
+    
+    # Identify brands with less than 2% of total participants
+    brands_to_group = brand_totals[brand_totals / total_participants < 0.02].index.tolist()
+    
+    # Group small brands as "Outros"
+    if brands_to_group:
+        # Create a copy to avoid modifying the original data
+        chart_data_grouped = chart_data.copy()
+        
+        # Replace small brands with "Outros"
+        chart_data_grouped.loc[chart_data_grouped['shoe_brand'].isin(brands_to_group), 'shoe_brand'] = 'Outros'
+        
+        # Aggregate the "Outros" data
+        chart_data_grouped = chart_data_grouped.groupby(['shoe_brand', 'gender'], as_index=False).agg({
+            'count': 'sum'
+        })
+        
+        # Recalculate percentages after grouping
+        chart_data_grouped['percentage'] = chart_data_grouped['count'] / chart_data_grouped.groupby('shoe_brand')['count'].transform('sum')
+        
+        chart_data = chart_data_grouped
     st.dataframe(chart_data, use_container_width=True, hide_index=True)
 
     # Create a normalized stacked bar chart
