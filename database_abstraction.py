@@ -108,7 +108,7 @@ class DatabaseManager:
             conn.close()
     
     def create_tables(self):
-        """Create all tables if they don't exist."""
+        """Create all tables if they don't exist and ensure default admin user exists."""
         try:
             if not self.engine:
                 raise RuntimeError("Database engine not initialized")
@@ -116,9 +116,48 @@ class DatabaseManager:
             self.metadata.create_all(self.engine)
             logger.info("Database tables created/ensured.")
             
+            # Create default admin user if it doesn't exist
+            self._ensure_default_admin_user()
+            
         except Exception as e:
             logger.error(f"Failed to create tables: {e}")
             raise
+    
+    def _ensure_default_admin_user(self):
+        """Ensure default admin user exists in the database."""
+        default_admin_email = "admin@admin"
+        default_admin_password = "admin"
+        
+        try:
+            # Check if admin user already exists
+            existing_user = self.verify_user(default_admin_email, default_admin_password)
+            if existing_user:
+                logger.info("Default admin user already exists and is accessible")
+                return
+            
+            # Check if user exists but password might be different
+            with self.get_connection() as conn:
+                stmt = select(self.users).where(self.users.c.email == default_admin_email)
+                result = conn.execute(stmt).fetchone()
+                
+                if result:
+                    logger.info("Default admin user exists with different password - skipping creation")
+                    return
+            
+            # Create default admin user
+            success = self.add_user(
+                email=default_admin_email,
+                password=default_admin_password,
+                is_admin=True
+            )
+            
+            if success:
+                logger.info(f"✅ Default admin user created: {default_admin_email}/{default_admin_password}")
+            else:
+                logger.warning("Failed to create default admin user")
+                
+        except Exception as e:
+            logger.error(f"Error ensuring default admin user: {e}")
 
     def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
         """Execute a raw SQL query and return results as list of dictionaries."""
