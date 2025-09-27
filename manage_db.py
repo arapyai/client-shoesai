@@ -1,18 +1,8 @@
 # manage_db.py
 import argparse
-import json
-import pandas as pd
+import os
 from database_abstraction import db
-
-
-def load_json_records(path: str):
-    """Load a JSON file that may be a list or dict of columns."""
-    with open(path, 'r', encoding='utf-8-sig') as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        return data
-    return pd.DataFrame(data).to_dict(orient='records')
-
+from sqlalchemy import text
 
 def get_user_by_email(email: str):
     for user in db.get_all_users():
@@ -23,6 +13,131 @@ def get_user_by_email(email: str):
 
 def ensure_tables():
     db.create_tables()
+
+
+def drop_all_tables(args):
+    """Drop all tables and recreate the database structure."""
+    if not args.confirm:
+        print("⚠️  ATENÇÃO: Esta operação irá apagar TODOS os dados do banco!")
+        print("Para confirmar, use: --confirm")
+        return
+    
+    if not db or not db.engine:
+        print("❌ Erro: Banco de dados não inicializado.")
+        return
+    
+    try:
+        # Get database type to handle differently
+        db_url = str(db.engine.url)
+        
+        with db.get_connection() as conn:
+            if db_url.startswith('postgresql'):
+                # For PostgreSQL, use CASCADE to drop dependencies
+                print("🐘 PostgreSQL detectado - usando CASCADE para remover dependências...")
+                
+                # Get all table names
+                result = conn.execute(
+                    text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                )
+                tables = [row[0] for row in result.fetchall()]
+                
+                # Drop each table with CASCADE
+                for table in tables:
+                    try:
+                        conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+                        print(f"   ✅ Tabela {table} removida")
+                    except Exception as e:
+                        print(f"   ⚠️  Erro ao remover {table}: {e}")
+                
+                conn.commit()
+                print("✅ Todas as tabelas foram removidas com CASCADE.")
+            else:
+                # For SQLite and others, use normal drop
+                db.metadata.drop_all(db.engine)
+                print("✅ Todas as tabelas foram removidas.")
+            
+            # Recreate tables
+            db.metadata.create_all(db.engine)
+            print("✅ Estrutura do banco recriada.")
+            
+        print("🗑️  Banco de dados limpo com sucesso!")
+        
+    except Exception as e:
+        print(f"❌ Erro ao limpar banco: {e}")
+
+
+def reset_database(args):
+    """Reset the entire database - drop tables and delete SQLite file if applicable."""
+    if not args.confirm:
+        print("⚠️  ATENÇÃO: Esta operação irá apagar COMPLETAMENTE o banco de dados!")
+        print("Para confirmar, use: --confirm")
+        return
+    
+    if not db or not db.engine:
+        print("❌ Erro: Banco de dados não inicializado.")
+        return
+    
+    try:
+        # Get database type and path
+        db_url = str(db.engine.url)
+        
+        if db_url.startswith('sqlite'):
+            # For SQLite, delete the file
+            db_path = db_url.replace('sqlite:///', '')
+            
+            # Close the connection first
+            db.engine.dispose()
+            
+            # Remove SQLite files
+            files_to_remove = [db_path, f"{db_path}-shm", f"{db_path}-wal", f"{db_path}-journal"]
+            removed_files = []
+            
+            for file_path in files_to_remove:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    removed_files.append(file_path)
+            
+            if removed_files:
+                print(f"🗑️  Arquivos removidos: {', '.join(removed_files)}")
+            
+            # Reinitialize the database
+            db._initialize_engine()
+            db.create_tables()
+            
+        else:
+            # For PostgreSQL or other databases, drop all tables with CASCADE
+            with db.get_connection() as conn:
+                if db_url.startswith('postgresql'):
+                    # For PostgreSQL, use CASCADE to drop dependencies
+                    print("🐘 PostgreSQL detectado - usando CASCADE para remover dependências...")
+                    
+                    # Get all table names
+                    result = conn.execute(
+                        text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                    )
+                    tables = [row[0] for row in result.fetchall()]
+                    
+                    # Drop each table with CASCADE
+                    for table in tables:
+                        try:
+                            conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+                            print(f"   ✅ Tabela {table} removida")
+                        except Exception as e:
+                            print(f"   ⚠️  Erro ao remover {table}: {e}")
+                    
+                    conn.commit()
+                    print("✅ Todas as tabelas PostgreSQL removidas com CASCADE.")
+                else:
+                    # For other databases, use normal drop
+                    db.metadata.drop_all(db.engine)
+                
+                # Recreate tables
+                db.metadata.create_all(db.engine)
+        
+        print("✅ Banco de dados completamente resetado!")
+        
+    except Exception as e:
+        print(f"❌ Erro ao resetar banco: {e}")
 
 
 # ---- User Operations ----
@@ -80,68 +195,6 @@ def user_update(args):
             return
     print('User updated successfully.')
 
-
-# ---- Marathon Operations ----
-
-def marathon_list(args):
-    marathons = db.get_marathon_list_from_db()
-    for m in marathons:
-        print(f"{m['id']}: {m['name']} ({m.get('event_date','')})")
-
-
-def marathon_add(args):
-    user_id = args.user_id or 1
-    marathon_id = db.add_marathon_metadata(
-        args.name,
-        args.event_date,
-        args.location,
-        args.distance,
-        args.description,
-        args.json,
-        user_id,
-    )
-    if not marathon_id:
-        print('Error adding marathon metadata.')
-        return
-    records = load_json_records(args.json)
-    if db.insert_parsed_json_data(marathon_id, records):
-        print(f"Marathon '{args.name}' added with ID {marathon_id}.")
-    else:
-        print('Failed to import JSON data.')
-
-
-def marathon_delete(args):
-    if db.delete_marathon_by_id(args.id):
-        print(f"Marathon {args.id} deleted successfully.")
-    else:
-        print('Error deleting marathon.')
-
-
-def marathon_update(args):
-    # update metadata or import JSON
-    fields = {}
-    if args.name:
-        fields['name'] = args.name
-    if args.event_date:
-        fields['event_date'] = args.event_date
-    if args.location:
-        fields['location'] = args.location
-    if args.distance is not None:
-        fields['distance_km'] = args.distance
-    if args.description:
-        fields['description'] = args.description
-    if fields:
-        from sqlalchemy import update
-        with db.get_connection() as conn:
-            stmt = update(db.marathons).where(db.marathons.c.marathon_id == args.id).values(**fields)
-            conn.execute(stmt)
-            conn.commit()
-    if args.json:
-        records = load_json_records(args.json)
-        db.insert_parsed_json_data(args.id, records)
-    print('Marathon updated successfully.')
-
-
 def build_parser():
     parser = argparse.ArgumentParser(description='Manage CourtShoes AI database.')
     subparsers = parser.add_subparsers(dest='entity', required=True)
@@ -172,36 +225,19 @@ def build_parser():
     uu.add_argument('--admin', type=lambda x: x.lower() == 'true')
     uu.set_defaults(func=user_update)
 
-    # Marathon subcommands
-    m_parser = subparsers.add_parser('marathon', help='Manage marathons')
-    m_sub = m_parser.add_subparsers(dest='action', required=True)
+    # Database management commands
+    db_parser = subparsers.add_parser('database', help='Manage database')
+    db_sub = db_parser.add_subparsers(dest='action', required=True)
 
-    ma = m_sub.add_parser('add', help='Add marathon from JSON')
-    ma.add_argument('--name', required=True)
-    ma.add_argument('--json', required=True)
-    ma.add_argument('--event-date')
-    ma.add_argument('--location')
-    ma.add_argument('--distance', type=float)
-    ma.add_argument('--description')
-    ma.add_argument('--user-id', type=int)
-    ma.set_defaults(func=marathon_add)
+    # Clean command - drop and recreate tables
+    clean = db_sub.add_parser('clean', help='Drop all tables and recreate structure')
+    clean.add_argument('--confirm', action='store_true', help='Confirm the operation')
+    clean.set_defaults(func=drop_all_tables)
 
-    md = m_sub.add_parser('delete', help='Delete marathon')
-    md.add_argument('--id', type=int, required=True)
-    md.set_defaults(func=marathon_delete)
-
-    ml = m_sub.add_parser('list', help='List marathons')
-    ml.set_defaults(func=marathon_list)
-
-    mu = m_sub.add_parser('update', help='Update marathon metadata or add JSON')
-    mu.add_argument('--id', type=int, required=True)
-    mu.add_argument('--name')
-    mu.add_argument('--event-date')
-    mu.add_argument('--location')
-    mu.add_argument('--distance', type=float)
-    mu.add_argument('--description')
-    mu.add_argument('--json')
-    mu.set_defaults(func=marathon_update)
+    # Reset command - completely reset database (delete SQLite file or drop all tables)
+    reset = db_sub.add_parser('reset', help='Completely reset database')
+    reset.add_argument('--confirm', action='store_true', help='Confirm the operation')
+    reset.set_defaults(func=reset_database)
 
     return parser
 
@@ -209,8 +245,14 @@ def build_parser():
 def main():
     ensure_tables()
     parser = build_parser()
-    args = parser.parse_args()
-    args.func(args)
+    if parser:
+        args = parser.parse_args()
+        if hasattr(args, 'func'):
+            args.func(args)
+        else:
+            parser.print_help()
+    else:
+        print("❌ Erro ao inicializar parser de comandos.")
 
 
 if __name__ == '__main__':
