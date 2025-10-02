@@ -46,36 +46,62 @@ selected_marathon = st.multiselect(
 
 if selected_marathon:
     selected_ids = [MARATHON_ID_MAP[name] for name in selected_marathon]
-    marathon_id = selected_ids[0]  # Use the first selected marathon ID
     
-    # Get marathon data
-    with st.spinner("🔄 Carregando dados da prova..."):
-        marathon_data = db.get_individual_marathon_metrics(marathon_id)
+    # Determine layout based on number of selected marathons
+    num_marathons = len(selected_ids)
     
-    if marathon_data:
-        st.markdown("---")
+    if num_marathons <= 3:
+        # Display side by side without scrollbar
+        cols = st.columns(num_marathons)
+    else:
+        # Display with horizontal scrolling using columns
+        st.markdown("""
+        <style>
+        .scrollable-row {
+            display: flex;
+            overflow-x: auto;
+            gap: 1rem;
+        }
+        .scrollable-row > div {
+            min-width: 400px;
+            flex-shrink: 0;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        cols = st.columns(num_marathons)
+    
+    # Display each marathon in its column
+    for idx, (marathon_id, marathon_name) in enumerate(zip(selected_ids, selected_marathon)):
+        with cols[idx]:
+            # Get marathon data
+            with st.spinner(f"🔄 Carregando {marathon_name}..."):
+                marathon_data = db.get_individual_marathon_metrics(marathon_id)
+            
+            if marathon_data:
+                # Marathon info card
+                st.subheader(f"📊 {marathon_data.get('marathon_name')}")
 
-        # Marathon info card
-        st.subheader(f"📊 {marathon_data.get('marathon_name')}")
+                with st.container(border=True):
+                    render_marathon_info_cards(marathon_data)
+                
+                # Brand distribution chart
+                with st.expander("Distribuição de Marcas", expanded=True):
+                    render_brand_distribution_chart(marathon_data, highlight=HIGHLIGHT_BRANDS)
 
-
-        with st.container(border=True):
-            render_marathon_info_cards(marathon_data)
-        
-        # Brand distribution chart
-        with st.expander("Distribuição de Marcas", expanded=True):
-            render_brand_distribution_chart(marathon_data, highlight=HIGHLIGHT_BRANDS)
-
-        # Demographic analysis
-        with st.expander("Presença de marcas por gênero", expanded=True):
-            gender_data = db.get_gender_brand_distribution(marathon_id)
-            render_demographic_analysis(gender_data)
-        
-        with st.expander("Presença de marcas por distância.", expanded=True):
-            category_data = db.get_category_brand_distribution(marathon_id)
-            render_category_distribution_analysis(category_data, highlight=HIGHLIGHT_BRANDS)
-
-        # Export options
+                # Demographic analysis
+                with st.expander("Presença de marcas por gênero", expanded=True):
+                    gender_data = db.get_gender_brand_distribution(marathon_id)
+                    render_demographic_analysis(gender_data)
+                
+                with st.expander("Presença de marcas por distância.", expanded=True):
+                    category_data = db.get_category_brand_distribution(marathon_id)
+                    render_category_distribution_analysis(category_data, highlight=HIGHLIGHT_BRANDS)
+            else:
+                st.error(f"❌ Não foi possível carregar os dados da prova '{marathon_name}'.")
+    
+    # Export options (shown after all marathons)
+    if num_marathons == 1:
+        marathon_id = selected_ids[0]
         st.markdown("---")
         st.subheader("📤 Opções de Exportação")
         
@@ -92,7 +118,7 @@ if selected_marathon:
                         st.download_button(
                             label="⬇️ Download CSV",
                             data=csv,
-                            file_name=f"{selected_marathon}_dados.csv",
+                            file_name=f"{selected_marathon[0]}_dados.csv",
                             mime="text/csv"
                         )
                     else:
@@ -105,14 +131,13 @@ if selected_marathon:
         
         if st.button("📄 Gerar Relatório PDF", use_container_width=True):
             st.info("🚧 Funcionalidade em desenvolvimento")
-        
-        # Debug info (for development)
-        if st.sidebar.checkbox("🔧 Mostrar Info de Debug"):
-            st.sidebar.subheader("Debug Info")
-            st.sidebar.write(f"Provas disponíveis: {len(MARATHON_NAMES_LIST)}")
-            st.sidebar.write(f"Prova selecionada: {selected_marathon}")
-            st.sidebar.write(f"ID da prova: {MARATHON_ID_MAP.get(selected_marathon, 'N/A')}")
-            st.sidebar.json(marathon_data, expanded=False)
+    
+    # Debug info (for development)
+    if st.sidebar.checkbox("🔧 Mostrar Info de Debug"):
+        st.sidebar.subheader("Debug Info")
+        st.sidebar.write(f"Provas disponíveis: {len(MARATHON_NAMES_LIST)}")
+        st.sidebar.write(f"Provas selecionadas: {selected_marathon}")
+        st.sidebar.write(f"IDs das provas: {selected_ids}")
     else:
         st.error(f"❌ Não foi possível carregar os dados da prova '{selected_marathon}'.")
 else:
