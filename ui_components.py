@@ -432,7 +432,7 @@ def render_category_distribution_analysis(category_data, highlight=None):
                 alt.Tooltip('percentage:Q', title='Percentual', format='.1%'),
             ]
         ).properties(
-            title=f'Categoria: {category}',
+            title=f'{category}',
             height=alt.Step(BAR_HEIGHT),
             width='container'
         ).configure_view(
