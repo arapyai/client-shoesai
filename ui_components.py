@@ -372,6 +372,21 @@ def render_category_distribution_analysis(category_data, highlight=None):
     Args:
         category_data: Dictionary containing category distribution metrics from database
     """
+    def sort_categories(category_name):
+        """
+        Custom sort function: numeric categories first (by value), then alphabetically.
+        Extracts numbers from strings like '10K', '5K', '21KM', etc.
+        """
+        import re
+        # Try to extract a number from the category name
+        match = re.search(r'(\d+)', str(category_name))
+        if match:
+            # Return tuple: (0 for numeric, the number extracted)
+            return (0, int(match.group(1)))
+        else:
+            # Return tuple: (1 for non-numeric, the category name for alphabetical sort)
+            return (1, str(category_name))
+    
     # Create horizontal bar charts for each category
     st.subheader("📊 Distribuição de Categorias")
     
@@ -395,7 +410,7 @@ def render_category_distribution_analysis(category_data, highlight=None):
         )
     
     # Create a separate chart for each category
-    categories = sorted(chart_data['run_category'].unique())
+    categories = sorted(chart_data['run_category'].unique(), key=sort_categories)
     
     for category in categories:
         category_df = chart_data[chart_data['run_category'] == category].copy()
