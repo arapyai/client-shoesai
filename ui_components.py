@@ -322,7 +322,6 @@ def render_demographic_analysis(gender_data):
         chart_data_grouped['percentage'] = chart_data_grouped['count'] / chart_data_grouped.groupby('shoe_brand')['count'].transform('sum')
         
         chart_data = chart_data_grouped
-    st.dataframe(chart_data, use_container_width=True, hide_index=True)
 
     # Create a normalized stacked bar chart
     chart = alt.Chart(chart_data).mark_bar().encode(
