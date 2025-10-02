@@ -2,8 +2,12 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from utils import group_small_categories_as_others
+
+# --- Constants ---
+BAR_HEIGHT = 30  # Height in pixels for each bar in horizontal bar charts
+
 # --- Utility Functions ---
 
 def check_auth(admin_only=False):
@@ -64,7 +68,7 @@ def create_bar_chart(
     x_col: str,
     y_col: str,
     title: str = "",
-    height: int = 400,
+    height: Union[int, alt.Step, None] = None,
     highlight_condition: Optional[str] = None,
     highlight_color: str = "#ff6b6b",
     default_color: str = "#1f77b4"
@@ -87,9 +91,16 @@ def create_bar_chart(
     else:
         x_scale = alt.Scale(domain=[0, data[x_col].max() * 1.1])
 
+    # Calculate height based on number of items if not provided
+    if height is None:
+        height = alt.Step(BAR_HEIGHT)
+
     chart = alt.Chart(data).mark_bar().encode(
         x=alt.X(f'{x_col}:Q', title=x_col.replace('_', ' ').title(), scale=x_scale),
-        y=alt.Y(f'{y_col}:N', title=y_col.replace('_', ' ').title(), sort='-x'),
+        y=alt.Y(f'{y_col}:N', 
+                title=y_col.replace('_', ' ').title(), 
+                sort='-x',
+                axis=alt.Axis(labelLimit=300)),
         color=color_condition,
         tooltip=[
             alt.Tooltip(f'{y_col}:N', title=y_col.replace('_', ' ').title()),
@@ -259,7 +270,7 @@ def render_brand_distribution_chart(marathon_data: Dict[str, Any], highlight=Non
         y=alt.Y('Marca:N', 
                 title='Marca',
                 sort='-x',  # Sort by descending percentual
-                axis=alt.Axis(labelLimit=200)),
+                axis=alt.Axis(labelLimit=300)),
         color=alt.Color('color:N', 
                        scale=None,  # Use the exact colors we specified
                        legend=None),
@@ -269,8 +280,8 @@ def render_brand_distribution_chart(marathon_data: Dict[str, Any], highlight=Non
             alt.Tooltip('Contagem:Q', title='Participantes', format=',d')
         ]
     ).properties(
-        height=max(400, len(df) * 40),  # Dynamic height based on number of brands
-        width='container'
+        width='container',
+        height=alt.Step(BAR_HEIGHT)
     ).configure_axis(
         labelFontSize=12,
         titleFontSize=14
@@ -324,8 +335,13 @@ def render_demographic_analysis(gender_data):
         chart_data = chart_data_grouped
 
     # Create a normalized stacked bar chart
+    num_brands = len(chart_data['shoe_brand'].unique())
+    
     chart = alt.Chart(chart_data).mark_bar().encode(
-        y=alt.Y('shoe_brand:N', title='Marca', sort='-x'),
+        y=alt.Y('shoe_brand:N', 
+                title='Marca', 
+                sort='-x',
+                axis=alt.Axis(labelLimit=300)),
         x=alt.X('percentage:Q', 
                 title='Distribuição por Gênero (%)', 
                 axis=alt.Axis(format='%'),
@@ -333,20 +349,18 @@ def render_demographic_analysis(gender_data):
         color=alt.Color('gender:N', 
                        title='Gênero',
                        scale=alt.Scale(
-                           domain=color_scheme.keys(),
-                           range=color_scheme.values())),
+                           domain=list(color_scheme.keys()),
+                           range=list(color_scheme.values()))),
         tooltip=[
             alt.Tooltip('shoe_brand:N', title='Marca'),
             alt.Tooltip('gender:N', title='Gênero'),
             alt.Tooltip('percentage:Q', title='Percentual', format='.1%')
         ]
     ).properties(
-        height=max(400, len(chart_data['shoe_brand'].unique()) * 30),
-        title='Distribuição de Gênero por Marca'
+        title='Distribuição de Gênero por Marca',
+        height=alt.Step(BAR_HEIGHT)
     ).configure_view(
         strokeWidth=0
-    ).configure_axisY(
-        labelLimit=200
     )
     
     st.altair_chart(chart, use_container_width=True)
@@ -379,10 +393,14 @@ def render_category_distribution_analysis(category_data, highlight=None):
             lambda x: '#e74c3c' if x in highlight else '#3498db'
         )
     # Create a horizontal bar chart
+    num_brands = len(chart_data['shoe_brand'].unique())
     
     chart = alt.Chart(chart_data).mark_bar().encode(
         x=alt.X('percentage:Q', title='Percentual', axis=alt.Axis(format='%')),
-        y=alt.Y('shoe_brand:N', title='Marca', sort='-x'),
+        y=alt.Y('shoe_brand:N', 
+                title='Marca', 
+                sort='-x',
+                axis=alt.Axis(labelLimit=300)),
         color=alt.Color('color:N', 
             scale=None,  # Use the exact colors we specified
             legend=None),
@@ -395,8 +413,8 @@ def render_category_distribution_analysis(category_data, highlight=None):
         x='independent',  # Independent x-axis for each category
         y='independent'
     ).properties(
-        height=max(400, len(chart_data) * 30),
-        title='Distribuição de Categorias'
+        title='Distribuição de Categorias',
+        height=alt.Step(BAR_HEIGHT)
     ).configure_view(
         strokeWidth=0
     )
