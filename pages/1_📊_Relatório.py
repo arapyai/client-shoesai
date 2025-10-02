@@ -138,7 +138,5 @@ if selected_marathon:
         st.sidebar.write(f"Provas disponíveis: {len(MARATHON_NAMES_LIST)}")
         st.sidebar.write(f"Provas selecionadas: {selected_marathon}")
         st.sidebar.write(f"IDs das provas: {selected_ids}")
-    else:
-        st.error(f"❌ Não foi possível carregar os dados da prova '{selected_marathon}'.")
 else:
     st.info("👆 Selecione uma prova acima para visualizar o relatório.")
