@@ -372,6 +372,7 @@ def render_category_distribution_analysis(category_data, highlight=None):
     Args:
         category_data: Dictionary containing category distribution metrics from database
     """
+    # Create horizontal bar charts for each category
     st.subheader("📊 Distribuição de Categorias")
     
     if category_data.empty:
@@ -392,31 +393,35 @@ def render_category_distribution_analysis(category_data, highlight=None):
         chart_data['color'] = chart_data['shoe_brand'].apply(
             lambda x: '#e74c3c' if x in highlight else '#3498db'
         )
-    # Create a horizontal bar chart
-    num_brands = len(chart_data['shoe_brand'].unique())
     
-    chart = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X('percentage:Q', title='Percentual', axis=alt.Axis(format='%')),
-        y=alt.Y('shoe_brand:N', 
-                title='Marca', 
-                sort='-x',
-                axis=alt.Axis(labelLimit=300)),
-        color=alt.Color('color:N', 
-            scale=None,  # Use the exact colors we specified
-            legend=None),
-        tooltip=[
-            alt.Tooltip('shoe_brand:N', title='Marca'),
-            alt.Tooltip('percentage:Q', title='Percentual', format='.1%'),
-        ],
-        facet=alt.Facet('run_category:N', title='Categoria')
-    ).resolve_scale(
-        x='independent',  # Independent x-axis for each category
-        y='independent'
-    ).properties(
-        title='Distribuição de Categorias',
-        height=alt.Step(BAR_HEIGHT)
-    ).configure_view(
-        strokeWidth=0
-    )
+    # Create a separate chart for each category
+    categories = sorted(chart_data['run_category'].unique())
     
-    st.altair_chart(chart, use_container_width=True)
+    for category in categories:
+        category_df = chart_data[chart_data['run_category'] == category].copy()
+        
+        chart = alt.Chart(category_df).mark_bar().encode(
+            x=alt.X('percentage:Q', 
+                    title='Percentual', 
+                    axis=alt.Axis(format='%'),
+                    scale=alt.Scale(domain=[0, 0.5])),  # Fixed scale from 0 to 50%
+            y=alt.Y('shoe_brand:N', 
+                    title='Marca', 
+                    sort='-x',
+                    axis=alt.Axis(labelLimit=300)),
+            color=alt.Color('color:N', 
+                scale=None,  # Use the exact colors we specified
+                legend=None),
+            tooltip=[
+                alt.Tooltip('shoe_brand:N', title='Marca'),
+                alt.Tooltip('percentage:Q', title='Percentual', format='.1%'),
+            ]
+        ).properties(
+            title=f'Categoria: {category}',
+            height=alt.Step(BAR_HEIGHT),
+            width='container'
+        ).configure_view(
+            strokeWidth=0
+        )
+        
+        st.altair_chart(chart, use_container_width=True)
