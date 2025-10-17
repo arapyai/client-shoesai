@@ -9,6 +9,7 @@ from ui_components import (
     check_auth
 )
 from database_abstraction import db
+from reports import generate_marathon_pdf_report
 
 # --- Page Config ---
 st.set_page_config(layout="wide", page_title="Shoes AI - Relatórios")
@@ -49,6 +50,7 @@ if selected_marathon:
     
     # Determine layout based on number of selected marathons
     num_marathons = len(selected_ids)
+    marathon_export_context = {}
     
     if num_marathons <= 3:
         # Display side by side without scrollbar
@@ -96,12 +98,21 @@ if selected_marathon:
                 with st.expander("Presença de marcas por distância.", expanded=True):
                     category_data = db.get_category_brand_distribution(marathon_id)
                     render_category_distribution_analysis(category_data, highlight=HIGHLIGHT_BRANDS)
+
+                # Store context for export actions
+                marathon_export_context[marathon_id] = {
+                    "metrics": marathon_data,
+                    "gender_df": gender_data,
+                    "category_df": category_data
+                }
             else:
                 st.error(f"❌ Não foi possível carregar os dados da prova '{marathon_name}'.")
     
     # Export options (shown after all marathons)
     if num_marathons == 1:
         marathon_id = selected_ids[0]
+        context = marathon_export_context.get(marathon_id)
+
         st.markdown("---")
         st.subheader("📤 Opções de Exportação")
         
@@ -119,18 +130,41 @@ if selected_marathon:
                             label="⬇️ Download CSV",
                             data=csv,
                             file_name=f"{selected_marathon[0]}_dados.csv",
-                            mime="text/csv"
+                            mime="text/csv",
+                            use_container_width=True
                         )
                     else:
                         st.warning("Nenhum dado encontrado para exportação.")
                 except Exception as e:
                     st.error(f"Erro ao exportar: {e}")
         
-        if st.button("📈 Exportar Gráficos", use_container_width=True):
-            st.info("🚧 Funcionalidade em desenvolvimento")
+        with col2:
+            if st.button("📈 Exportar Gráficos", use_container_width=True):
+                st.info("🚧 Funcionalidade em desenvolvimento")
         
-        if st.button("📄 Gerar Relatório PDF", use_container_width=True):
-            st.info("🚧 Funcionalidade em desenvolvimento")
+        with col3:
+            if st.button("📄 Gerar Relatório PDF", use_container_width=True):
+                try:
+                    if not context or not context.get("metrics"):
+                        st.warning("Não foi possível preparar os dados da prova selecionada.")
+                    else:
+                        runners = db.get_marathon_runners(marathon_id)
+                        pdf_bytes = generate_marathon_pdf_report(
+                            context["metrics"],
+                            gender_distribution=context.get("gender_df"),
+                            category_distribution=context.get("category_df"),
+                            runners=runners,
+                            generated_by=st.session_state.user_info.get("email")
+                        )
+                        st.download_button(
+                            label="⬇️ Baixar PDF",
+                            data=pdf_bytes,
+                            file_name=f"{selected_marathon[0]}_relatorio.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
     
     # Debug info (for development)
     if st.sidebar.checkbox("🔧 Mostrar Info de Debug"):
