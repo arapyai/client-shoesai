@@ -2,7 +2,8 @@ streamlit
 pandas
 passlib
 altair
-fpdf2
+weasyprint
+matplotlib
 
 # Database abstraction and drivers
 sqlalchemy>=2.0.0
