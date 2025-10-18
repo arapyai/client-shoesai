@@ -1,0 +1,92 @@
+/* Print stylesheet for marathon analytics page */
+
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  header,
+  footer,
+  [data-testid="stHeader"],
+  [data-testid="stToolbar"],
+  [data-testid="stSidebar"],
+  nav {
+    display: none !important;
+  }
+
+  .stApp {
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  .block-container {
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .print-hide,
+  button,
+  [role="button"],
+  .stButton,
+  .stDownloadButton,
+  .stStyledButton,
+  .stAlert {
+    display: none !important;
+  }
+
+  .stColumn {
+    width: 100% !important;
+    flex: none !important;
+    display: block !important;
+  }
+
+  .streamlit-expanderHeader {
+    display: none !important;
+  }
+
+  .streamlit-expanderContent {
+    display: block !important;
+    border: none !important;
+    padding-top: 0 !important;
+  }
+
+  .print-slide {
+    page-break-after: always;
+    break-after: page;
+    padding: 10mm 12mm;
+    box-sizing: border-box;
+  }
+
+  .print-slide:last-of-type {
+    page-break-after: auto;
+  }
+
+  .print-slide h2,
+  .print-slide h3 {
+    color: #1f2a44 !important;
+  }
+
+  .print-slide .stPlotlyChart,
+  .print-slide .stAltairChart,
+  .print-slide .stVegaLiteChart {
+    page-break-inside: avoid;
+  }
+}
+

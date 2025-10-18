@@ -1,5 +1,7 @@
-import streamlit as st
+from pathlib import Path
+
 import pandas as pd
+import streamlit as st
 from ui_components import (
     page_header_with_logout,
     render_brand_distribution_chart,
@@ -13,6 +15,11 @@ from reports import generate_marathon_pdf_report
 
 # --- Page Config ---
 st.set_page_config(layout="wide", page_title="Shoes AI - Relatórios")
+
+# --- Print Stylesheet ---
+print_css_path = Path("assets/print_analytics.css")
+if print_css_path.exists():
+    st.markdown(f"<style>{print_css_path.read_text()}</style>", unsafe_allow_html=True)
 
 # --- Authentication Check ---
 user_id = check_auth()
@@ -38,12 +45,14 @@ if not MARATHON_NAMES_LIST:
         st.switch_page("pages/3_📥_Importador_de_Dados.py")
     st.stop()
 
-# Simple marathon selector
+# Simple marathon selector (hidden on print)
+st.markdown('<div class="print-hide">', unsafe_allow_html=True)
 selected_marathon = st.multiselect(
     "Escolha uma prova para análise:",
     options=MARATHON_NAMES_LIST,
     key="selected_marathon_simple"
 )
+st.markdown('</div>', unsafe_allow_html=True)
 
 if selected_marathon:
     selected_ids = [MARATHON_ID_MAP[name] for name in selected_marathon]
@@ -75,6 +84,7 @@ if selected_marathon:
     # Display each marathon in its column
     for idx, (marathon_id, marathon_name) in enumerate(zip(selected_ids, selected_marathon)):
         with cols[idx]:
+            st.markdown('<section class="print-slide">', unsafe_allow_html=True)
             # Get marathon data
             with st.spinner(f"🔄 Carregando {marathon_name}..."):
                 marathon_data = db.get_individual_marathon_metrics(marathon_id)
@@ -107,12 +117,14 @@ if selected_marathon:
                 }
             else:
                 st.error(f"❌ Não foi possível carregar os dados da prova '{marathon_name}'.")
+            st.markdown('</section>', unsafe_allow_html=True)
     
     # Export options (shown after all marathons)
     if num_marathons == 1:
         marathon_id = selected_ids[0]
         context = marathon_export_context.get(marathon_id)
 
+        st.markdown('<div class="print-hide">', unsafe_allow_html=True)
         st.markdown("---")
         st.subheader("📤 Opções de Exportação")
         
@@ -165,6 +177,7 @@ if selected_marathon:
                         )
                 except Exception as e:
                     st.error(f"Erro ao gerar PDF: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Debug info (for development)
     if st.sidebar.checkbox("🔧 Mostrar Info de Debug"):
