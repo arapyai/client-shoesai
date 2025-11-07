@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 import math
+import toml
 from typing import Optional, List, Dict, Any, Union
 from utils import group_small_categories_as_others
 
@@ -365,12 +366,14 @@ def render_demographic_analysis(gender_data):
     
     st.altair_chart(chart, use_container_width=True)
 
-def render_category_distribution_analysis(category_data, highlight=None):
+def render_category_distribution_analysis(category_data, total_participants, highlight=None):
     """
     Renders category distribution analysis charts optimized for database data.
-    
+
     Args:
-        category_data: Dictionary containing category distribution metrics from database
+        category_data: DataFrame containing category distribution metrics from database
+        total_participants: Total number of participants in the marathon
+        highlight: List of brands to highlight in charts
     """
     def sort_categories(category_name):
         """
@@ -389,9 +392,23 @@ def render_category_distribution_analysis(category_data, highlight=None):
     
     # Create horizontal bar charts for each category
     st.subheader("📊 Distribuição de Categorias")
-    
+
+    # Read config for minimum category percentage
+    try:
+        config = toml.load('.streamlit/config.toml')
+        min_percentage = config.get('custom', {}).get('min_category_runner_percentage', 2.5) / 100
+    except Exception:
+        min_percentage = 0.025  # Default 2.5%
+
+    # Filter categories with less than minimum percentage of total participants
+    if not category_data.empty:
+        total_per_category = category_data.groupby('run_category')['count'].sum()
+        min_count = min_percentage * total_participants
+        valid_categories = total_per_category[total_per_category >= min_count].index
+        category_data = category_data[category_data['run_category'].isin(valid_categories)]
+
     if category_data.empty:
-        st.info("📋 Nenhuma categoria detectada para gerar o gráfico.")
+        st.info("📋 Nenhuma categoria atende ao critério mínimo para gerar o gráfico.")
         return
     
     # Prepare data for visualization

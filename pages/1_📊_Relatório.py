@@ -107,7 +107,7 @@ if selected_marathon:
                 
                 with st.expander("Presença de marcas por distância.", expanded=True):
                     category_data = db.get_category_brand_distribution(marathon_id)
-                    render_category_distribution_analysis(category_data, highlight=HIGHLIGHT_BRANDS)
+                    render_category_distribution_analysis(category_data, marathon_data['total_participants'], highlight=HIGHLIGHT_BRANDS)
 
                 # Store context for export actions
                 marathon_export_context[marathon_id] = {
