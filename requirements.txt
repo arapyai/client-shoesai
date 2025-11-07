@@ -12,6 +12,7 @@ psycopg2-binary  # For PostgreSQL support
 
 # Environment variable management
 python-dotenv
+toml
 
 # Progress bars for migration
 tqdm

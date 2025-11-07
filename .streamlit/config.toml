@@ -3,3 +3,4 @@ base="light"
 
 [custom]
 IMAGE_SERVER="http://localhost/images"
+min_category_runner_percentage = 2.5
